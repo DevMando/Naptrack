@@ -1,0 +1,318 @@
+@page "/"
+@using Microsoft.Extensions.Hosting
+@using Naptrack.Models
+@using Naptrack.Services
+
+@inject IHostApplicationLifetime AppLifetime
+@inject ConfigService Config
+@inject DependencyChecker DepChecker
+@inject BinaryDownloader Downloader
+@inject YtDlpService YtDlp
+@inject FolderPickerService FolderPicker
+
+<Align Horizontal="HorizontalAlignment.Center">
+    <Markup Content="@_banner" Foreground="Color.DodgerBlue2" />
+</Align>
+
+@if (_setupInProgress)
+{
+    <Panel Title="Setting Up" BorderColor="Color.Yellow" Expand="true">
+        <Rows>
+            <Spinner Message="@_setupMessage" SpinnerType="Spectre.Console.Spinner.Known.Binary" />
+        </Rows>
+    </Panel>
+}
+else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegInstalled))
+{
+    <Panel Title="Setup Failed" BorderColor="Color.Red" Expand="true">
+        <Rows>
+            <Markup Content="@_setupMessage" Foreground="Color.Red" />
+            @if (!DepChecker.IsYtDlpInstalled)
+            {
+                <Markup Content="yt-dlp could not be downloaded automatically." Foreground="Color.Red" />
+            }
+            @if (!DepChecker.IsFfmpegInstalled)
+            {
+                <Markup Content="ffmpeg could not be downloaded automatically." Foreground="Color.Red" />
+            }
+            <TextButton Content="[ Retry Setup ]"
+                        OnClick="RunSetup"
+                        BackgroundColor="Color.Black"
+                        FocusedColor="Color.Blue1" />
+        </Rows>
+    </Panel>
+}
+
+<TextInput Value="@_url"
+           ValueChanged="@((v) => _url = v)"
+           OnSubmit="@((v) => StartDownload())"
+           @onkeydown="HandleKeyDown"
+           Label="Paste URL (Esc to clear)"
+           LabelColor="Color.DodgerBlue2"
+           Placeholder="YouTube, TikTok, Instagram, Facebook..."
+           PlaceholderColor="Color.Grey"
+           BorderStyle="BoxBorder.Rounded"
+           BorderColor="Color.Grey"
+           FocusedBorderColor="Color.DodgerBlue2"
+           Expand="true"
+           FocusOrder="1" />
+
+@if (_status == DownloadStatus.Downloading || _status == DownloadStatus.Converting)
+{
+    <Spinner Message="@_statusMessage" SpinnerType="@_currentSpinner" />
+}
+else if (_status == DownloadStatus.Complete)
+{
+    <Markup Content="@_resultMessage" Foreground="Color.Green" />
+}
+else if (_status == DownloadStatus.Error)
+{
+    <Markup Content="@_resultMessage" Foreground="Color.Red" />
+}
+
+<Align Horizontal="HorizontalAlignment.Center">
+    <Columns>
+        <TextButton Content="@(_format == DownloadFormat.Mp3 ? "[ MP3 ]" : "  MP3  ")"
+                    OnClick="() => _format = DownloadFormat.Mp3"
+                    BackgroundColor="@(_format == DownloadFormat.Mp3 ? Color.Purple4 : Color.Black)"
+                    FocusedColor="Color.Blue1" />
+        <TextButton Content="@(_format == DownloadFormat.Mp4 ? "[ MP4 ]" : "  MP4  ")"
+                    OnClick="() => _format = DownloadFormat.Mp4"
+                    BackgroundColor="@(_format == DownloadFormat.Mp4 ? Color.Purple4 : Color.Black)"
+                    FocusedColor="Color.Blue1" />
+    </Columns>
+</Align>
+
+<Align Horizontal="HorizontalAlignment.Center">
+    <TextButton Content="[ Download ]"
+                OnClick="StartDownload"
+                BackgroundColor="Color.Black"
+                FocusedColor="Color.Blue1" />
+</Align>
+
+<Columns>
+    <Markup Content="Download folder:" Foreground="Color.Grey" />
+    <TextButton Content="@Config.Config.DownloadFolder"
+                OnClick="OpenDownloadFolder"
+                BackgroundColor="Color.Black"
+                FocusedColor="Color.Blue1" />
+    <TextButton Content="[ Change ]"
+                OnClick="ChangeFolder"
+                BackgroundColor="Color.Black"
+                FocusedColor="Color.Blue1" />
+    <TextButton Content="[ Quit ]"
+                OnClick="Quit"
+                BackgroundColor="Color.Black"
+                FocusedColor="Color.Blue1" />
+</Columns>
+
+@if (!string.IsNullOrEmpty(_folderMessage))
+{
+    <Markup Content="@_folderMessage" Foreground="@_folderMessageColor" />
+}
+
+<Markup Content="@_shortcuts" Foreground="Color.Grey" />
+
+@code {
+    private const string _banner =
+        "███╗   ██╗ █████╗ ██████╗ ████████╗██████╗  █████╗  ██████╗██╗  ██╗\n" +
+        "████╗  ██║██╔══██╗██╔══██╗╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██║ ██╔╝\n" +
+        "██╔██╗ ██║███████║██████╔╝   ██║   ██████╔╝███████║██║     █████╔╝\n" +
+        "██║╚██╗██║██╔══██║██╔═══╝    ██║   ██╔══██╗██╔══██║██║     ██╔═██╗\n" +
+        "██║ ╚████║██║  ██║██║        ██║   ██║  ██║██║  ██║╚██████╗██║  ██╗\n" +
+        "╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝        ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝";
+
+    private static readonly string _shortcuts =
+        System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
+            ? "Tab: navigate  |  Enter: select  |  Esc: clear  |  Ctrl+V: paste"
+        : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
+            ? "Tab: navigate  |  Enter: select  |  Esc: clear  |  Cmd+V: paste"
+            : "Tab: navigate  |  Enter: select  |  Esc: clear  |  Ctrl+Shift+V: paste";
+
+    private string _folderMessage = "";
+    private Color _folderMessageColor = Color.White;
+
+    private string _url = "";
+    private DownloadFormat _format = DownloadFormat.Mp3;
+    private DownloadStatus _status = DownloadStatus.Idle;
+    private string _statusMessage = "Starting...";
+    private Spectre.Console.Spinner _currentSpinner = Spectre.Console.Spinner.Known.Dots2;
+    private string _resultMessage = "";
+    private bool _depsChecked;
+    private bool _setupInProgress;
+    private string _setupMessage = "";
+    private CancellationTokenSource? _cts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Config.LoadAsync();
+        await RunSetup();
+    }
+
+    private async Task RunSetup()
+    {
+        _setupInProgress = true;
+        _setupMessage = "Checking dependencies...";
+        await InvokeAsync(StateHasChanged);
+
+        await DepChecker.CheckAsync();
+
+        if (!DepChecker.IsYtDlpInstalled)
+        {
+            _setupMessage = "Downloading yt-dlp...";
+            await InvokeAsync(StateHasChanged);
+
+            await Downloader.DownloadYtDlpAsync(msg =>
+            {
+                InvokeAsync(() =>
+                {
+                    _setupMessage = msg;
+                    StateHasChanged();
+                });
+            });
+
+            // Re-check after download
+            await DepChecker.CheckAsync();
+        }
+
+        if (!DepChecker.IsFfmpegInstalled)
+        {
+            _setupMessage = "Downloading ffmpeg (this may take a minute)...";
+            await InvokeAsync(StateHasChanged);
+
+            await Downloader.DownloadFfmpegAsync(msg =>
+            {
+                InvokeAsync(() =>
+                {
+                    _setupMessage = msg;
+                    StateHasChanged();
+                });
+            });
+
+            // Re-check after download
+            await DepChecker.CheckAsync();
+        }
+
+        _setupInProgress = false;
+        _depsChecked = true;
+
+        if (DepChecker.IsYtDlpInstalled && DepChecker.IsFfmpegInstalled)
+            _setupMessage = "";
+        else
+            _setupMessage = "Some dependencies could not be installed automatically.";
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            _url = "";
+            _status = DownloadStatus.Idle;
+            _resultMessage = "";
+        }
+    }
+
+    private async Task StartDownload()
+    {
+        if (string.IsNullOrWhiteSpace(_url))
+            return;
+
+        if (!_url.StartsWith("http://") && !_url.StartsWith("https://"))
+        {
+            _status = DownloadStatus.Error;
+            _resultMessage = "Invalid URL. Please enter a valid link.";
+            return;
+        }
+
+        if (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegInstalled)
+        {
+            _status = DownloadStatus.Error;
+            _resultMessage = "Missing dependencies. Check Settings for details.";
+            return;
+        }
+
+        _status = DownloadStatus.Downloading;
+        _statusMessage = "Starting Download...";
+        _currentSpinner = Spectre.Console.Spinner.Known.Dots2;
+        _resultMessage = "";
+        _cts = new CancellationTokenSource();
+
+        await InvokeAsync(StateHasChanged);
+
+        _ = Task.Run(async () =>
+        {
+            await YtDlp.DownloadAsync(
+                _url,
+                Config.Config.DownloadFolder,
+                _format,
+                onProgress: pct =>
+                {
+                    InvokeAsync(() =>
+                    {
+                        _currentSpinner = Spectre.Console.Spinner.Known.Binary;
+                        _statusMessage = $"Downloading... {pct:F1}%";
+                        if (pct >= 100)
+                            _status = DownloadStatus.Converting;
+                        StateHasChanged();
+                    });
+                },
+                onStatus: msg =>
+                {
+                    InvokeAsync(() =>
+                    {
+                        _statusMessage = msg;
+                        StateHasChanged();
+                    });
+                },
+                onComplete: (success, msg) =>
+                {
+                    InvokeAsync(() =>
+                    {
+                        _status = success ? DownloadStatus.Complete : DownloadStatus.Error;
+                        _resultMessage = msg;
+                        StateHasChanged();
+                    });
+                },
+                ct: _cts.Token
+            );
+        });
+    }
+
+    private async Task ChangeFolder()
+    {
+        var newFolder = await FolderPicker.PickFolderAsync();
+        if (string.IsNullOrEmpty(newFolder))
+        {
+            _folderMessage = "No folder selected. Your current folder remains unchanged.";
+            _folderMessageColor = Color.MediumPurple1;
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(newFolder);
+            Config.Config.DownloadFolder = newFolder;
+            await Config.SaveAsync();
+            _folderMessage = "✅ Folder saved!";
+            _folderMessageColor = Color.Green;
+        }
+        catch (Exception ex)
+        {
+            _folderMessage = $"❌ Invalid path: {ex.Message}";
+            _folderMessageColor = Color.Red;
+        }
+    }
+
+    private void OpenDownloadFolder()
+    {
+        FolderPicker.OpenFolder(Config.Config.DownloadFolder);
+    }
+
+    private void Quit()
+    {
+        _cts?.Cancel();
+        AppLifetime.StopApplication();
+    }
+}

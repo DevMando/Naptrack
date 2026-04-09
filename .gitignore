@@ -1,0 +1,20 @@
+## .NET
+bin/
+obj/
+publish/
+
+## IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+## OS
+Thumbs.db
+.DS_Store
+
+## Build
+*.nupkg
+*.snupkg

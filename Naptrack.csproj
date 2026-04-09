@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- dotnet tool -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>naptrack</ToolCommandName>
+    <PackageId>Naptrack</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>DevMando</Authors>
+    <Description>Grab audio and video from the web. A TUI app to download MP3/MP4 from YouTube, TikTok, Instagram, Facebook, and 1000+ sites.</Description>
+    <PackageProjectUrl>https://github.com/DevMando/Naptrack</PackageProjectUrl>
+    <PackageTags>youtube;mp3;mp4;audio;video;downloader;tui;cli;tiktok;instagram</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReleaseNotes>v1.0.0 - Initial release. Download MP3/MP4 from YouTube, TikTok, Instagram, Facebook, and 1000+ sites. Auto-installs yt-dlp and ffmpeg. Cross-platform TUI.</PackageReleaseNotes>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Self-contained publish (for standalone binaries) -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="RazorConsole.Core" Version="0.3.0-alpha.*" />
+  </ItemGroup>
+
+</Project>

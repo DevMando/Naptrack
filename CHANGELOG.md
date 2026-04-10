@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-04-09)
+
+### Fixes
+- Fix ASCII banner misalignment caused by multi-line Markup inside a single Align component
+
 ## 1.0.0 (2026-04-09)
 
 Initial release.

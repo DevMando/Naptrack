@@ -11,10 +11,15 @@
 @inject FolderPickerService FolderPicker
 
 <Align Horizontal="HorizontalAlignment.Center">
-    <Markup Content="@_banner" Foreground="Color.DodgerBlue2" />
+    <Rows>
+        @foreach (var line in _bannerLines)
+        {
+            <Markup Content="@line" Foreground="Color.DodgerBlue2" />
+        }
+    </Rows>
 </Align>
 <Align Horizontal="HorizontalAlignment.Right">
-    <Markup Content="v1.0.0" Foreground="Color.Grey" />
+    <Markup Content="v1.0.1" Foreground="Color.Grey" />
 </Align>
 
 @if (_setupInProgress)
@@ -117,13 +122,15 @@ else if (_status == DownloadStatus.Error)
 <Markup Content="@_shortcuts" Foreground="Color.Grey" />
 
 @code {
-    private const string _banner =
-        "███╗   ██╗ █████╗ ██████╗ ████████╗██████╗  █████╗  ██████╗██╗  ██╗\n" +
-        "████╗  ██║██╔══██╗██╔══██╗╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██║ ██╔╝\n" +
-        "██╔██╗ ██║███████║██████╔╝   ██║   ██████╔╝███████║██║     █████╔╝\n" +
-        "██║╚██╗██║██╔══██║██╔═══╝    ██║   ██╔══██╗██╔══██║██║     ██╔═██╗\n" +
-        "██║ ╚████║██║  ██║██║        ██║   ██║  ██║██║  ██║╚██████╗██║  ██╗\n" +
-        "╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝        ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝";
+    private static readonly string[] _bannerLines =
+    [
+        "███╗   ██╗ █████╗ ██████╗ ████████╗██████╗  █████╗  ██████╗██╗  ██╗",
+        "████╗  ██║██╔══██╗██╔══██╗╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██║ ██╔╝",
+        "██╔██╗ ██║███████║██████╔╝   ██║   ██████╔╝███████║██║     █████╔╝ ",
+        "██║╚██╗██║██╔══██║██╔═══╝    ██║   ██╔══██╗██╔══██║██║     ██╔═██╗ ",
+        "██║ ╚████║██║  ██║██║        ██║   ██║  ██║██║  ██║╚██████╗██║  ██╗",
+        "╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝        ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝",
+    ];
 
     private static readonly string _shortcuts =
         System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)

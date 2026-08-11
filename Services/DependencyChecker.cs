@@ -60,8 +60,12 @@ public class DependencyChecker
         Checked = true;
     }
 
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(15);
+
     private static async Task<(bool installed, string output)> CheckCommandAsync(string command, string args)
     {
+        Process? process = null;
+
         try
         {
             var psi = new ProcessStartInfo
@@ -74,17 +78,47 @@ public class DependencyChecker
                 CreateNoWindow = true
             };
 
-            using var process = Process.Start(psi);
+            process = Process.Start(psi);
             if (process is null)
                 return (false, "");
 
-            var output = (await process.StandardOutput.ReadLineAsync()) ?? "";
-            await process.WaitForExitAsync();
-            return (process.ExitCode == 0, output);
+            using var timeout = new CancellationTokenSource(ProbeTimeout);
+
+            // Drain both pipes before waiting on exit. `ffmpeg -version` writes several KB
+            // (the configuration line alone runs past 2000 chars), which overflows the 4KB
+            // Windows pipe buffer and deadlocks a read-one-line-then-wait sequence.
+            var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
+
+            await Task.WhenAll(stdout, stderr);
+            await process.WaitForExitAsync(timeout.Token);
+
+            var firstLine = stdout.Result.Split('\n', 2)[0].TrimEnd('\r');
+            return (process.ExitCode == 0, firstLine);
         }
         catch
         {
+            // A missing binary, a broken one that cannot load its DLLs, or a probe that
+            // outlived ProbeTimeout all mean "not usable".
+            TryKill(process);
             return (false, "");
+        }
+        finally
+        {
+            process?.Dispose();
+        }
+    }
+
+    private static void TryKill(Process? process)
+    {
+        try
+        {
+            if (process is { HasExited: false })
+                process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // Best effort
         }
     }
 }

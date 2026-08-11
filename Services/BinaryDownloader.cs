@@ -110,7 +110,7 @@ public class BinaryDownloader
         var zipPath = Path.Combine(BinDir, "ffmpeg.zip");
 
         await DownloadFileAsync(url, zipPath, ct);
-        ExtractFfmpegFromZip(zipPath, "ffmpeg.exe");
+        ExtractFfmpegBinFolderFromZip(zipPath);
         File.Delete(zipPath);
     }
 
@@ -142,6 +142,35 @@ public class BinaryDownloader
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         await using var file = File.Create(destPath);
         await stream.CopyToAsync(file, ct);
+    }
+
+    // The win64 "shared" build links ffmpeg.exe against the av*/sw* DLLs that sit
+    // beside it in bin/, so pulling out the exe on its own leaves it unable to start.
+    // Everything in bin/ has to land in BinDir together.
+    private void ExtractFfmpegBinFolderFromZip(string zipPath)
+    {
+        using var archive = ZipFile.OpenRead(zipPath);
+
+        var entries = archive.Entries
+            .Where(e => e.Name.Length > 0)
+            .Where(e => e.FullName.Contains("bin/", StringComparison.OrdinalIgnoreCase))
+            .Where(e => e.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                     || e.Name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            .Where(e => !e.Name.Equals("ffplay.exe", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var ffmpegName = GetFfmpegFilename();
+        if (!entries.Any(e => e.Name.Equals(ffmpegName, StringComparison.OrdinalIgnoreCase)))
+            throw new FileNotFoundException($"Could not find {ffmpegName} in archive.");
+
+        foreach (var entry in entries)
+        {
+            // Flatten to entry.Name so a crafted archive cannot escape BinDir.
+            var destination = Path.Combine(BinDir, entry.Name);
+            entry.ExtractToFile(destination, overwrite: true);
+        }
+
+        MakeExecutable(FfmpegPath);
     }
 
     private void ExtractFfmpegFromZip(string zipPath, string targetName)

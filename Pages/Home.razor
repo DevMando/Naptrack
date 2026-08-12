@@ -5,6 +5,7 @@
 
 @inject IHostApplicationLifetime AppLifetime
 @inject ConfigService Config
+@inject UpdateChecker Updater
 @inject DependencyChecker DepChecker
 @inject BinaryDownloader Downloader
 @inject YtDlpService YtDlp
@@ -19,8 +20,15 @@
     </Rows>
 </Align>
 <Align Horizontal="HorizontalAlignment.Right">
-    <Markup Content="v1.0.1" Foreground="Color.Grey" />
+    <Markup Content="@($"v{UpdateChecker.CurrentVersion}")" Foreground="Color.Grey" />
 </Align>
+@if (Updater.UpdateAvailable)
+{
+    <Align Horizontal="HorizontalAlignment.Center">
+        <Markup Content="@($"Update available: v{Updater.NewerVersion}  ({Updater.Command})")"
+                Foreground="Color.Yellow" />
+    </Align>
+}
 
 @if (_setupInProgress)
 {
@@ -156,7 +164,20 @@ else if (_status == DownloadStatus.Error)
     protected override async Task OnInitializedAsync()
     {
         await Config.LoadAsync();
+
+        // Deliberately not awaited: a slow or unreachable nuget.org must never
+        // delay dependency setup or the first paint.
+        _ = RefreshUpdateStatusAsync();
+
         await RunSetup();
+    }
+
+    private async Task RefreshUpdateStatusAsync()
+    {
+        await Updater.CheckAsync();
+
+        if (Updater.UpdateAvailable)
+            await InvokeAsync(StateHasChanged);
     }
 
     private async Task RunSetup()

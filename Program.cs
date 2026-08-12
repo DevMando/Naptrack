@@ -14,6 +14,7 @@ IHostBuilder hostBuilder = Host.CreateDefaultBuilder(args)
         config.ConfigureServices(services =>
         {
             services.AddSingleton<ConfigService>();
+            services.AddSingleton<UpdateChecker>();
             services.AddSingleton<BinaryDownloader>();
             services.AddSingleton<DependencyChecker>();
             services.AddSingleton<YtDlpService>();

@@ -99,9 +99,34 @@ public class BinaryDownloader
             return $"{baseUrl}/yt-dlp.exe";
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             return $"{baseUrl}/yt-dlp_macos";
-        if (RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
-            return $"{baseUrl}/yt-dlp_linux_aarch64";
-        return $"{baseUrl}/yt-dlp_linux";
+
+        var arm64 = RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
+
+        // The plain linux builds are linked against glibc and will not start on
+        // Alpine and friends, which need the musllinux builds instead.
+        if (IsMuslLinux())
+            return arm64 ? $"{baseUrl}/yt-dlp_musllinux_aarch64" : $"{baseUrl}/yt-dlp_musllinux";
+
+        return arm64 ? $"{baseUrl}/yt-dlp_linux_aarch64" : $"{baseUrl}/yt-dlp_linux";
+    }
+
+    private static bool IsMuslLinux()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return false;
+
+        if (RuntimeInformation.RuntimeIdentifier.Contains("musl", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        try
+        {
+            // A musl system ships its loader as /lib/ld-musl-<arch>.so.1.
+            return Directory.EnumerateFiles("/lib", "ld-musl-*.so.1").Any();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private async Task DownloadFfmpegWindowsAsync(CancellationToken ct)
@@ -127,6 +152,18 @@ public class BinaryDownloader
 
     private async Task DownloadFfmpegMacAsync(CancellationToken ct)
     {
+        // evermeet publishes x86_64 only, so Apple Silicon would be stuck on Rosetta.
+        // These are bare arm64 binaries rather than an archive, so there is nothing to unpack.
+        if (RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
+        {
+            const string armUrl =
+                "https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-darwin-arm64";
+
+            await DownloadFileAsync(armUrl, FfmpegPath, ct);
+            MakeExecutable(FfmpegPath);
+            return;
+        }
+
         const string url = "https://evermeet.cx/ffmpeg/get/zip";
         var zipPath = Path.Combine(BinDir, "ffmpeg.zip");
 

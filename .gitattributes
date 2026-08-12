@@ -1,0 +1,15 @@
+# This repo gets edited from both Windows and WSL. Without a rule here, whichever
+# side saved a file last decides its line endings, so files flip between CRLF and
+# LF and show up as whole-file diffs containing no actual change. Store and check
+# out LF everywhere so a diff only ever shows real edits.
+* text=auto eol=lf
+
+# Never touch these: line-ending translation corrupts them.
+*.gif binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.zip binary
+*.mp3 binary
+*.mp4 binary

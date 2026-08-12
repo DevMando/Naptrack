@@ -22,7 +22,14 @@
     <!-- Self-contained publish (for standalone binaries) -->
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
-    <PublishTrimmed>true</PublishTrimmed>
+    <!--
+      Trimming must stay off. The Razor router finds routable components by reflecting
+      over assembly types, so the trimmer strips them as unreachable and every route
+      404s: the published v1.0.0 and v1.0.1 standalone binaries render nothing but
+      "Page not found. Press Tab to navigate." Microsoft.AspNetCore.Components warns
+      about exactly this with IL2104 during publish.
+    -->
+    <PublishTrimmed>false</PublishTrimmed>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 

@@ -10,13 +10,13 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>naptrack</ToolCommandName>
     <PackageId>Naptrack</PackageId>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>DevMando</Authors>
     <Description>Grab audio and video from the web. A TUI app to download MP3/MP4 from YouTube, TikTok, Instagram, Facebook, and 1000+ sites.</Description>
     <PackageProjectUrl>https://github.com/DevMando/Naptrack</PackageProjectUrl>
     <PackageTags>youtube;mp3;mp4;audio;video;downloader;tui;cli;tiktok;instagram</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>v1.0.1 - Fix ASCII banner misalignment in TUI.</PackageReleaseNotes>
+    <PackageReleaseNotes>v1.0.2 - Fixes the standalone binaries, which showed only "Page not found" on every platform. Repairs ffmpeg setup on Windows and Apple Silicon, and yt-dlp setup on Alpine. Fixes a hang during the dependency check on Windows. Adds a notice when a newer version is available.</PackageReleaseNotes>
     <PackageReadmeFile>README.md</PackageReadmeFile>
 
     <!-- Self-contained publish (for standalone binaries) -->

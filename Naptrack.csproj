@@ -10,13 +10,13 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>naptrack</ToolCommandName>
     <PackageId>Naptrack</PackageId>
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <Authors>DevMando</Authors>
     <Description>Grab audio and video from the web. A TUI app to download MP3/MP4 from YouTube, TikTok, Instagram, Facebook, and 1000+ sites.</Description>
     <PackageProjectUrl>https://github.com/DevMando/Naptrack</PackageProjectUrl>
     <PackageTags>youtube;mp3;mp4;audio;video;downloader;tui;cli;tiktok;instagram</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>v1.0.2 - Fixes the standalone binaries, which showed only "Page not found" on every platform. Repairs ffmpeg setup on Windows and Apple Silicon, and yt-dlp setup on Alpine. Fixes a hang during the dependency check on Windows. Adds a notice when a newer version is available.</PackageReleaseNotes>
+    <PackageReleaseNotes>v1.0.3 - Queue several downloads at once, each with its own progress bar, speed, ETA and Cancel button. Playlist links no longer expand into the whole playlist unless you ask. Adds URL history, automatic retries on transient blocks, and a persisted download folder, format and history. Fixes a crash when navigating during a download, progress stuck at 0% on comma-decimal locales, and mislabelled MP4 conversion.</PackageReleaseNotes>
     <PackageReadmeFile>README.md</PackageReadmeFile>
 
     <!-- Self-contained publish (for standalone binaries) -->

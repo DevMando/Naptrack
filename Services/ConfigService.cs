@@ -4,7 +4,9 @@ using Naptrack.Models;
 
 namespace Naptrack.Services;
 
-[JsonSourceGenerationOptions(WriteIndented = true)]
+// Enums are written as names rather than ordinals: config.json is a file users open and edit,
+// and "Mp4" is self-explanatory where "1" is not.
+[JsonSourceGenerationOptions(WriteIndented = true, UseStringEnumConverter = true)]
 [JsonSerializable(typeof(AppConfig))]
 internal partial class AppConfigContext : JsonSerializerContext;
 
@@ -25,18 +27,38 @@ public class ConfigService
 
     public async Task LoadAsync()
     {
-        if (File.Exists(ConfigPath))
+        var loaded = await TryReadAsync();
+
+        Config = loaded ?? new AppConfig();
+
+        if (loaded is null)
         {
-            var json = await File.ReadAllTextAsync(ConfigPath);
-            Config = JsonSerializer.Deserialize(json, AppConfigContext.Default.AppConfig) ?? new AppConfig();
-        }
-        else
-        {
-            Config = new AppConfig();
-            await SaveAsync();
+            // Seed the file on a first run, or replace one that would not parse.
+            try { await SaveAsync(); }
+            catch { /* unwritable location; the defaults still work for this session */ }
         }
 
-        Directory.CreateDirectory(Config.DownloadFolder);
+        try { Directory.CreateDirectory(Config.DownloadFolder); }
+        catch { /* the download itself reports this, with context the user can act on */ }
+    }
+
+    private static async Task<AppConfig?> TryReadAsync()
+    {
+        if (!File.Exists(ConfigPath))
+            return null;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(ConfigPath);
+            return JsonSerializer.Deserialize(json, AppConfigContext.Default.AppConfig);
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            // A truncated or hand-edited config.json must not stop the app from starting.
+            // LoadAsync is the first await in OnInitializedAsync, so throwing here kills
+            // the app before it paints, leaving no way to recover from inside Naptrack.
+            return null;
+        }
     }
 
     public async Task SaveAsync()

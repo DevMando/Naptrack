@@ -1,7 +1,10 @@
 @page "/"
+@using System.Globalization
 @using Microsoft.Extensions.Hosting
 @using Naptrack.Models
 @using Naptrack.Services
+
+@implements IDisposable
 
 @inject IHostApplicationLifetime AppLifetime
 @inject ConfigService Config
@@ -15,24 +18,24 @@
     <Rows>
         @foreach (var line in _bannerLines)
         {
-            <Markup Content="@line" Foreground="Color.DodgerBlue2" />
+            <Markup Content="@line" Foreground="Theme.Accent" />
         }
     </Rows>
 </Align>
 <Align Horizontal="HorizontalAlignment.Right">
-    <Markup Content="@($"v{UpdateChecker.CurrentVersion}")" Foreground="Color.Grey" />
+    <Markup Content="@($"v{UpdateChecker.CurrentVersion}")" Foreground="Theme.Muted" />
 </Align>
 @if (Updater.UpdateAvailable)
 {
     <Align Horizontal="HorizontalAlignment.Center">
         <Markup Content="@($"Update available: v{Updater.NewerVersion}  ({Updater.Command})")"
-                Foreground="Color.Yellow" />
+                Foreground="Theme.Warn" />
     </Align>
 }
 
 @if (_setupInProgress)
 {
-    <Panel Title="Setting Up" BorderColor="Color.Yellow" Expand="true">
+    <Panel Title="Setting Up" BorderColor="Theme.Warn" Expand="true">
         <Rows>
             <Spinner Message="@_setupMessage" SpinnerType="Spectre.Console.Spinner.Known.Binary" />
         </Rows>
@@ -40,86 +43,98 @@
 }
 else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegInstalled))
 {
-    <Panel Title="Setup Failed" BorderColor="Color.Red" Expand="true">
+    <Panel Title="Setup Failed" BorderColor="Theme.Error" Expand="true">
         <Rows>
-            <Markup Content="@_setupMessage" Foreground="Color.Red" />
+            <Markup Content="@_setupMessage" Foreground="Theme.Error" />
             @if (!DepChecker.IsYtDlpInstalled)
             {
-                <Markup Content="yt-dlp could not be downloaded automatically." Foreground="Color.Red" />
+                <Markup Content="yt-dlp could not be downloaded automatically." Foreground="Theme.Error" />
             }
             @if (!DepChecker.IsFfmpegInstalled)
             {
-                <Markup Content="ffmpeg could not be downloaded automatically." Foreground="Color.Red" />
+                <Markup Content="ffmpeg could not be downloaded automatically." Foreground="Theme.Error" />
             }
             <TextButton Content="[ Retry Setup ]"
                         OnClick="RunSetup"
-                        BackgroundColor="Color.Black"
-                        FocusedColor="Color.Blue1" />
+                        BackgroundColor="Theme.Surface"
+                        FocusedColor="Theme.Focus" />
         </Rows>
     </Panel>
 }
 
 <TextInput Value="@_url"
-           ValueChanged="@((v) => _url = v)"
+           ValueChanged="@((v) => OnUrlChanged(v))"
            OnSubmit="@((v) => StartDownload())"
            @onkeydown="HandleKeyDown"
-           Label="Paste URL (Esc to clear)"
-           LabelColor="Color.DodgerBlue2"
+           Label="Paste URL (↑ for history, Esc to clear)"
+           LabelColor="Theme.Accent"
            Placeholder="YouTube, TikTok, Instagram, Facebook..."
-           PlaceholderColor="Color.Grey"
+           PlaceholderColor="Theme.Muted"
            BorderStyle="BoxBorder.Rounded"
-           BorderColor="Color.Grey"
-           FocusedBorderColor="Color.DodgerBlue2"
+           BorderColor="Theme.Muted"
+           FocusedBorderColor="Theme.Accent"
            Expand="true"
            FocusOrder="1" />
 
-@if (_status == DownloadStatus.Downloading || _status == DownloadStatus.Converting)
-{
-    <Spinner Message="@_statusMessage" SpinnerType="@_currentSpinner" />
-}
-else if (_status == DownloadStatus.Complete)
-{
-    <Markup Content="@_resultMessage" Foreground="Color.Green" />
-}
-else if (_status == DownloadStatus.Error)
-{
-    <Markup Content="@_resultMessage" Foreground="Color.Red" />
-}
-
+@* Selection is carried by the marker, not by colour: the background is what shows focus, so
+   encoding both in colour made a focused-but-unselected option look active. *@
 <Align Horizontal="HorizontalAlignment.Center">
     <Columns>
-        <TextButton Content="@(_format == DownloadFormat.Mp3 ? "[ MP3 ]" : "  MP3  ")"
-                    OnClick="() => _format = DownloadFormat.Mp3"
-                    BackgroundColor="@(_format == DownloadFormat.Mp3 ? Color.Purple4 : Color.Black)"
-                    FocusedColor="Color.Blue1" />
-        <TextButton Content="@(_format == DownloadFormat.Mp4 ? "[ MP4 ]" : "  MP4  ")"
-                    OnClick="() => _format = DownloadFormat.Mp4"
-                    BackgroundColor="@(_format == DownloadFormat.Mp4 ? Color.Purple4 : Color.Black)"
-                    FocusedColor="Color.Blue1" />
+        <TextButton Content="@(_format == DownloadFormat.Mp3 ? "● MP3" : "○ MP3")"
+                    OnClick="() => SetFormat(DownloadFormat.Mp3)"
+                    BackgroundColor="Theme.Surface"
+                    FocusedColor="Theme.Focus" />
+        <TextButton Content="@(_format == DownloadFormat.Mp4 ? "● MP4" : "○ MP4")"
+                    OnClick="() => SetFormat(DownloadFormat.Mp4)"
+                    BackgroundColor="Theme.Surface"
+                    FocusedColor="Theme.Focus" />
     </Columns>
 </Align>
+
+@* Shown only for a link that carries a playlist, so the choice appears exactly when it matters
+   and never becomes hidden state that silently changes what the next download does. *@
+@if (HasPlaylist(_url))
+{
+    <Align Horizontal="HorizontalAlignment.Center">
+        <Columns>
+            <Markup Content="Playlist link:" Foreground="Theme.Warn" />
+            <TextButton Content="@(_wholePlaylist ? "○ This video only" : "● This video only")"
+                        OnClick="() => _wholePlaylist = false"
+                        BackgroundColor="Theme.Surface"
+                        FocusedColor="Theme.Focus" />
+            <TextButton Content="@(_wholePlaylist ? "● Whole playlist" : "○ Whole playlist")"
+                        OnClick="() => _wholePlaylist = true"
+                        BackgroundColor="Theme.Surface"
+                        FocusedColor="Theme.Focus" />
+        </Columns>
+    </Align>
+}
 
 <Align Horizontal="HorizontalAlignment.Center">
     <TextButton Content="[ Download ]"
                 OnClick="StartDownload"
-                BackgroundColor="Color.Black"
-                FocusedColor="Color.Blue1" />
+                BackgroundColor="Theme.Surface"
+                FocusedColor="Theme.Focus" />
 </Align>
 
+@* Always rendered, blank when there is nothing to say, so submitting a URL never
+   shifts the rows below it out from under the cursor. *@
+<Markup Content="@_formMessage" Foreground="Theme.Error" />
+
 <Columns>
-    <Markup Content="Download folder:" Foreground="Color.Grey" />
-    <TextButton Content="@Config.Config.DownloadFolder"
+    <Markup Content="Download folder:" Foreground="Theme.Muted" />
+    <TextButton Content="@Shorten(Config.Config.DownloadFolder)"
                 OnClick="OpenDownloadFolder"
-                BackgroundColor="Color.Black"
-                FocusedColor="Color.Blue1" />
+                BackgroundColor="Theme.Surface"
+                FocusedColor="Theme.Focus" />
     <TextButton Content="[ Change ]"
                 OnClick="ChangeFolder"
-                BackgroundColor="Color.Black"
-                FocusedColor="Color.Blue1" />
+                BackgroundColor="Theme.Surface"
+                FocusedColor="Theme.Focus" />
     <TextButton Content="[ Quit ]"
                 OnClick="Quit"
-                BackgroundColor="Color.Black"
-                FocusedColor="Color.Blue1" />
+                BackgroundColor="Theme.Surface"
+                FocusedColor="Theme.Focus" />
 </Columns>
 
 @if (!string.IsNullOrEmpty(_folderMessage))
@@ -127,9 +142,64 @@ else if (_status == DownloadStatus.Error)
     <Markup Content="@_folderMessage" Foreground="@_folderMessageColor" />
 }
 
-<Markup Content="@_shortcuts" Foreground="Color.Grey" />
+@if (_downloads.Count > 0)
+{
+    @* A local, not a field: mutating component state while the render tree is being built means
+       a row can be measured against one width and its neighbour against another. *@
+    var layout = Measure();
+
+    <Panel Title="@DownloadsTitle" BorderColor="Theme.Muted" Expand="true">
+        <Rows>
+            @* Every row is the same component type whatever its state, and none of them are
+               keyed. Both matter: a row that flipped from active to finished used to swap
+               Columns for Markup under one @key, so the keyed diff had to remap a key onto a
+               different component type — and when that component was the focused Cancel button,
+               tearing it down mid-diff faulted the renderer. Positional diffing over a uniform
+               structure is the well-trodden path, and the list is far too short for keys to buy
+               anything. *@
+            @foreach (var item in _downloads)
+            {
+                <Columns>
+                    @if (item.IsActive)
+                    {
+                        @* Spinner rather than a static bar: during conversion yt-dlp reports no
+                           percentage for minutes at a time, and the animation is the only thing
+                           distinguishing "working" from "hung". *@
+                        <Spinner Message="@ActiveLine(item, layout)" SpinnerType="@SpinnerFor(item)" />
+                        <TextButton Content="[ Cancel ]"
+                                    OnClick="() => Cancel(item)"
+                                    BackgroundColor="Theme.Surface"
+                                    FocusedColor="Theme.Error" />
+                    }
+                    else
+                    {
+                        <Markup Content="@FinishedLine(item, layout)" Foreground="@FinishedColor(item)" />
+                    }
+                </Columns>
+            }
+        </Rows>
+    </Panel>
+}
+
+<Markup Content="@_shortcuts" Foreground="Theme.Muted" />
 
 @code {
+    /// <summary>
+    /// One place for every colour the UI uses. Roles, not shades, so a restyle is a change here
+    /// rather than a grep across the file.
+    /// </summary>
+    private static class Theme
+    {
+        public static readonly Color Accent = Color.DodgerBlue2;
+        public static readonly Color Muted = Color.Grey;
+        public static readonly Color Success = Color.Green;
+        public static readonly Color Error = Color.Red;
+        public static readonly Color Warn = Color.Yellow;
+        public static readonly Color Notice = Color.MediumPurple1;
+        public static readonly Color Focus = Color.Blue1;
+        public static readonly Color Surface = Color.Black;
+    }
+
     private static readonly string[] _bannerLines =
     [
         "███╗   ██╗ █████╗ ██████╗ ████████╗██████╗  █████╗  ██████╗██╗  ██╗",
@@ -142,28 +212,166 @@ else if (_status == DownloadStatus.Error)
 
     private static readonly string _shortcuts =
         System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
-            ? "Tab: navigate  |  Enter: select  |  Esc: clear  |  Ctrl+V: paste"
+            ? "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Ctrl+V: paste"
         : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
-            ? "Tab: navigate  |  Enter: select  |  Esc: clear  |  Cmd+V: paste"
-            : "Tab: navigate  |  Enter: select  |  Esc: clear  |  Ctrl+Shift+V: paste";
+            ? "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Cmd+V: paste"
+            : "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Ctrl+Shift+V: paste";
+
+    /// <summary>
+    /// Parallel yt-dlp runs past this point mostly fight each other for bandwidth, and each one
+    /// spawns an ffmpeg conversion at the end. Extra submissions wait as "Queued".
+    /// </summary>
+    private const int MaxConcurrent = 3;
+
+    /// <summary>Finished rows kept before the oldest are dropped, so the list cannot outgrow the screen.</summary>
+    private const int MaxFinished = 5;
+
+    /// <summary>Total yt-dlp runs per download, including the first. Only transient failures retry.</summary>
+    private const int MaxAttempts = 3;
+
+    /// <summary>Backoff before retry N, multiplied by the attempt number: 3s, then 6s.</summary>
+    private const int RetryBackoffSeconds = 3;
+
+    /// <summary>Submitted URLs recalled with the up arrow.</summary>
+    private const int MaxHistory = 25;
+
+    /// <summary>
+    /// Everything in an active row that is neither the label, the bar, nor the rate:
+    /// spinner(2) + two gaps(4) + percent(6) + space and "[ Cancel ]"(11) + border and padding(4).
+    /// </summary>
+    private const int RowChrome = 27;
+
+    /// <summary>Worst-case width of "  850KiB/s · 01:02:03".</summary>
+    private const int RateWidth = 22;
+
+    private const int MinLabel = 12;
+    private const int MinBar = 8;
+
+    /// <summary>
+    /// Column widths for one render pass, derived from the live console width. A value rather
+    /// than fields so nothing about the layout is stored on the component mid-render.
+    /// </summary>
+    private readonly record struct RowLayout(
+        int Label,
+        int Bar,
+        int Row,
+        int Active,
+        bool ShowRate);
+
+    private readonly List<DownloadItem> _downloads = [];
+    private readonly SemaphoreSlim _slots = new(MaxConcurrent, MaxConcurrent);
+    private int _nextId = 1;
+
+    /// <summary>
+    /// How often the pump repaints while anything has changed. yt-dlp emits progress lines many
+    /// times a second per download, so repainting on each one meant hundreds of full tree diffs
+    /// a second across three downloads; ten a second is more than the eye resolves.
+    /// </summary>
+    private static readonly TimeSpan RenderInterval = TimeSpan.FromMilliseconds(100);
+
+    private static readonly TimeSpan FolderMessageLifetime = TimeSpan.FromSeconds(6);
+
+    /// <summary>
+    /// Guards every state mutation and every repaint.
+    ///
+    /// RazorConsole's renderer hands out an ImmediateDispatcher whose InvokeAsync simply invokes
+    /// the delegate on the calling thread — CheckAccess() is hardcoded to true and nothing is
+    /// marshalled. So InvokeAsync(StateHasChanged) from a yt-dlp reader thread renders *on that
+    /// thread*, and with several downloads running, plus the keyboard thread, several threads
+    /// end up inside Blazor's RenderTreeDiffBuilder at once. It is not thread safe, and the
+    /// result is a NullReferenceException in the diff.
+    /// </summary>
+    private readonly object _sync = new();
+
+    /// <summary>Set by any thread that changed something; cleared by the pump when it repaints.</summary>
+    private volatile bool _dirty;
+
+    private CancellationTokenSource? _pump;
 
     private string _folderMessage = "";
-    private Color _folderMessageColor = Color.White;
+    private Color _folderMessageColor = Theme.Muted;
+    private int _folderMessageSeq;
 
     private string _url = "";
+    private string _formMessage = "";
+    private bool _wholePlaylist;
+
+    /// <summary>Submitted URLs, oldest first. Backed by the config so it survives a restart.</summary>
+    private List<string> _history => Config.Config.RecentUrls;
+
+    /// <summary>Cursor into <see cref="_history"/> while browsing it; -1 when not browsing.</summary>
+    private int _historyIndex = -1;
+
+    /// <summary>Whatever was typed before the up arrow was first pressed, restored by arrowing back down.</summary>
+    private string _draft = "";
+
     private DownloadFormat _format = DownloadFormat.Mp3;
-    private DownloadStatus _status = DownloadStatus.Idle;
-    private string _statusMessage = "Starting...";
-    private Spectre.Console.Spinner _currentSpinner = Spectre.Console.Spinner.Known.Dots2;
-    private string _resultMessage = "";
     private bool _depsChecked;
     private bool _setupInProgress;
     private string _setupMessage = "";
-    private CancellationTokenSource? _cts;
+
+    private string DownloadsTitle
+    {
+        get
+        {
+            var active = _downloads.Count(d => d.IsActive);
+            return active > 0 ? $"Downloads ({active} active)" : "Downloads";
+        }
+    }
+
+    /// <summary>
+    /// Applies a state change and asks for a repaint, instead of repainting inline. Every mutation
+    /// goes through here, so the pump can never diff a half-updated list and no background thread
+    /// ever touches the renderer itself. See <see cref="_sync"/> for why that matters.
+    /// </summary>
+    private void Update(Action change)
+    {
+        lock (_sync)
+        {
+            change();
+        }
+
+        _dirty = true;
+    }
+
+    /// <summary>
+    /// The only place allowed to call StateHasChanged. Runs one tick at a time, so every repaint
+    /// this component causes is serialised against every other.
+    /// </summary>
+    private async Task RenderPumpAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(RenderInterval);
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                if (!_dirty)
+                    continue;
+
+                _dirty = false;
+
+                lock (_sync)
+                {
+                    StateHasChanged();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutting down.
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
+        _pump = new CancellationTokenSource();
+        _ = RenderPumpAsync(_pump.Token);
+
         await Config.LoadAsync();
+
+        _format = Config.Config.Format;
+        RestoreRecentDownloads();
 
         // Deliberately not awaited: a slow or unreachable nuget.org must never
         // delay dependency setup or the first paint.
@@ -172,35 +380,79 @@ else if (_status == DownloadStatus.Error)
         await RunSetup();
     }
 
+    /// <summary>
+    /// Seeds the list with the previous session's completions so a fresh start is not a blank
+    /// panel. They are inert rows: already settled, with no process or token behind them.
+    /// </summary>
+    private void RestoreRecentDownloads()
+    {
+        // Through Update like every other mutation: the pump is already ticking by the time the
+        // config finishes loading, so this list is live the moment it is touched.
+        Update(() =>
+        {
+            foreach (var recent in Config.Config.RecentDownloads.TakeLast(MaxFinished))
+            {
+                _downloads.Add(new DownloadItem
+                {
+                    Id = _nextId++,
+                    Url = "",
+                    Format = Config.Config.Format,
+                    Status = DownloadStatus.Complete,
+                    FileName = recent.FileName,
+                    Folder = recent.Folder,
+                    Percent = 100,
+                    Settled = true,
+                });
+            }
+        });
+    }
+
+    private async Task SetFormat(DownloadFormat format)
+    {
+        if (_format == format)
+            return;
+
+        _format = format;
+        Config.Config.Format = format;
+        await SaveConfigAsync();
+    }
+
+    private async Task SaveConfigAsync()
+    {
+        try
+        {
+            await Config.SaveAsync();
+        }
+        catch
+        {
+            // An unwritable config costs the user their preferences next launch, which is not
+            // worth interrupting a working session over.
+        }
+    }
+
     private async Task RefreshUpdateStatusAsync()
     {
         await Updater.CheckAsync();
 
         if (Updater.UpdateAvailable)
-            await InvokeAsync(StateHasChanged);
+            Update(() => { });
     }
 
     private async Task RunSetup()
     {
-        _setupInProgress = true;
-        _setupMessage = "Checking dependencies...";
-        await InvokeAsync(StateHasChanged);
+        Update(() =>
+        {
+            _setupInProgress = true;
+            _setupMessage = "Checking dependencies...";
+        });
 
         await DepChecker.CheckAsync();
 
         if (!DepChecker.IsYtDlpInstalled)
         {
-            _setupMessage = "Downloading yt-dlp...";
-            await InvokeAsync(StateHasChanged);
+            Update(() => _setupMessage = "Downloading yt-dlp...");
 
-            await Downloader.DownloadYtDlpAsync(msg =>
-            {
-                InvokeAsync(() =>
-                {
-                    _setupMessage = msg;
-                    StateHasChanged();
-                });
-            });
+            await Downloader.DownloadYtDlpAsync(msg => Update(() => _setupMessage = msg));
 
             // Re-check after download
             await DepChecker.CheckAsync();
@@ -208,107 +460,422 @@ else if (_status == DownloadStatus.Error)
 
         if (!DepChecker.IsFfmpegInstalled)
         {
-            _setupMessage = "Downloading ffmpeg (this may take a minute)...";
-            await InvokeAsync(StateHasChanged);
+            Update(() => _setupMessage = "Downloading ffmpeg (this may take a minute)...");
 
-            await Downloader.DownloadFfmpegAsync(msg =>
-            {
-                InvokeAsync(() =>
-                {
-                    _setupMessage = msg;
-                    StateHasChanged();
-                });
-            });
+            await Downloader.DownloadFfmpegAsync(msg => Update(() => _setupMessage = msg));
 
             // Re-check after download
             await DepChecker.CheckAsync();
         }
 
-        _setupInProgress = false;
-        _depsChecked = true;
+        Update(() =>
+        {
+            _setupInProgress = false;
+            _depsChecked = true;
 
-        if (DepChecker.IsYtDlpInstalled && DepChecker.IsFfmpegInstalled)
-            _setupMessage = "";
-        else
-            _setupMessage = "Some dependencies could not be installed automatically.";
-
-        await InvokeAsync(StateHasChanged);
+            _setupMessage = DepChecker.IsYtDlpInstalled && DepChecker.IsFfmpegInstalled
+                ? ""
+                : "Some dependencies could not be installed automatically.";
+        });
     }
 
+    // Key names come from ConsoleKey.ToString(), so the up arrow arrives as "UpArrow". The DOM
+    // spellings are accepted too, in case the event is ever synthesised from a browser-style source.
     private void HandleKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Escape")
+        switch (e.Key)
         {
-            _url = "";
-            _status = DownloadStatus.Idle;
-            _resultMessage = "";
+            case "Escape":
+                _url = "";
+                _formMessage = "";
+                _historyIndex = -1;
+                _draft = "";
+                break;
+
+            case "UpArrow" or "ArrowUp":
+                RecallOlder();
+                break;
+
+            case "DownArrow" or "ArrowDown":
+                RecallNewer();
+                break;
         }
     }
 
-    private async Task StartDownload()
+    private void OnUrlChanged(string value)
     {
-        if (string.IsNullOrWhiteSpace(_url))
+        if (value == _url)
             return;
 
-        if (!_url.StartsWith("http://") && !_url.StartsWith("https://"))
+        _url = value;
+
+        // An edit ends history browsing, so the next up arrow starts again from the newest entry.
+        _historyIndex = -1;
+    }
+
+    private void RecallOlder()
+    {
+        if (_history.Count == 0)
+            return;
+
+        if (_historyIndex < 0)
         {
-            _status = DownloadStatus.Error;
-            _resultMessage = "Invalid URL. Please enter a valid link.";
+            _draft = _url;
+            _historyIndex = _history.Count;
+        }
+
+        if (_historyIndex == 0)
+            return;
+
+        _url = _history[--_historyIndex];
+    }
+
+    private void RecallNewer()
+    {
+        if (_historyIndex < 0)
+            return;
+
+        _historyIndex++;
+
+        if (_historyIndex >= _history.Count)
+        {
+            _historyIndex = -1;
+            _url = _draft;
+            return;
+        }
+
+        _url = _history[_historyIndex];
+    }
+
+    private void Remember(string url)
+    {
+        // A resubmitted URL moves to the newest slot instead of appearing twice.
+        _history.Remove(url);
+        _history.Add(url);
+
+        while (_history.Count > MaxHistory)
+            _history.RemoveAt(0);
+
+        _historyIndex = -1;
+        _draft = "";
+
+        _ = SaveConfigAsync();
+    }
+
+    private void RememberDownload(DownloadItem item)
+    {
+        if (string.IsNullOrEmpty(item.FileName))
+            return;
+
+        var recent = Config.Config.RecentDownloads;
+        recent.Add(new RecentDownload { FileName = item.FileName, Folder = item.Folder });
+
+        while (recent.Count > MaxFinished)
+            recent.RemoveAt(0);
+
+        _ = SaveConfigAsync();
+    }
+
+    private void StartDownload()
+    {
+        var url = _url.Trim();
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            Update(() => _formMessage = "Paste a link first.");
+            return;
+        }
+
+        if (!url.StartsWith("http://") && !url.StartsWith("https://"))
+        {
+            Update(() => _formMessage = "Invalid URL. Please enter a valid link.");
             return;
         }
 
         if (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegInstalled)
         {
-            _status = DownloadStatus.Error;
-            _resultMessage = "Missing dependencies. Check Settings for details.";
+            Update(() => _formMessage = "Missing dependencies. Retry setup above.");
             return;
         }
 
-        _status = DownloadStatus.Downloading;
-        _statusMessage = "Starting Download...";
-        _currentSpinner = Spectre.Console.Spinner.Known.Dots2;
-        _resultMessage = "";
-        _cts = new CancellationTokenSource();
-
-        await InvokeAsync(StateHasChanged);
-
-        _ = Task.Run(async () =>
+        // Pressing Enter twice is easy now that the box keeps its text, and starting the same
+        // download a second time would have both runs fighting over one partial file.
+        if (_downloads.Any(d => d.IsActive && d.Url == url))
         {
-            await YtDlp.DownloadAsync(
-                _url,
-                Config.Config.DownloadFolder,
-                _format,
-                onProgress: pct =>
-                {
-                    InvokeAsync(() =>
-                    {
-                        _currentSpinner = Spectre.Console.Spinner.Known.Binary;
-                        _statusMessage = $"Downloading... {pct:F1}%";
-                        if (pct >= 100)
-                            _status = DownloadStatus.Converting;
-                        StateHasChanged();
-                    });
-                },
-                onStatus: msg =>
-                {
-                    InvokeAsync(() =>
-                    {
-                        _statusMessage = msg;
-                        StateHasChanged();
-                    });
-                },
-                onComplete: (success, msg) =>
-                {
-                    InvokeAsync(() =>
-                    {
-                        _status = success ? DownloadStatus.Complete : DownloadStatus.Error;
-                        _resultMessage = msg;
-                        StateHasChanged();
-                    });
-                },
-                ct: _cts.Token
-            );
+            Update(() => _formMessage = "That link is already downloading.");
+            return;
+        }
+
+        var item = new DownloadItem
+        {
+            Id = _nextId++,
+            Url = url,
+            Format = _format,
+
+            // Captured per download, so changing the toggle afterwards cannot retroactively
+            // turn a running single-video job into a whole-playlist one.
+            WholePlaylist = _wholePlaylist && HasPlaylist(url),
+        };
+
+        Update(() =>
+        {
+            _downloads.Add(item);
+
+            // The URL deliberately stays in the box. If the automatic retries are exhausted,
+            // pressing Enter again is the manual retry; CommitAsync clears it on success.
+            _formMessage = "";
         });
+
+        Remember(url);
+
+        _ = RunAsync(item);
+    }
+
+    private async Task RunAsync(DownloadItem item)
+    {
+        try
+        {
+            await _slots.WaitAsync(item.Cts.Token);
+        }
+        catch (Exception)
+        {
+            // Cancelled while still queued, or the app is shutting down: either way no process
+            // was ever started, and the slot was never taken so there is nothing to release.
+            // Caught broadly because this task is not awaited, so an escaping exception would
+            // surface on the finalizer thread instead of anywhere useful.
+            item.Settled = true;
+            Finish(item, DownloadStatus.Cancelled, "");
+            return;
+        }
+
+        try
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                var result = await AttemptAsync(item, attempt);
+
+                var giveUp = result.Success
+                    || !result.Retryable
+                    || attempt >= MaxAttempts
+                    || item.Cts.IsCancellationRequested;
+
+                if (giveUp)
+                {
+                    Commit(item, result);
+                    return;
+                }
+
+                await BackOffAsync(item, attempt, result.Message);
+
+                if (item.Cts.IsCancellationRequested)
+                {
+                    Finish(item, DownloadStatus.Cancelled, "");
+                    return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Last line of defence for an un-awaited task: anything that escapes DownloadAsync
+            // would otherwise leave this row spinning forever with no explanation.
+            Finish(item, DownloadStatus.Error, ex.Message);
+        }
+        finally
+        {
+            // Released only now, not when the row was marked cancelled: the slot belongs to the
+            // process until it is actually gone, or a fourth download would start alongside it.
+            item.Settled = true;
+            _slots.Release();
+        }
+    }
+
+    /// <summary>
+    /// Runs yt-dlp once and returns its outcome without committing it to the row, so the caller
+    /// can decide whether a transient failure is worth another attempt.
+    /// </summary>
+    private async Task<DownloadResult> AttemptAsync(DownloadItem item, int attempt)
+    {
+        // Only assigned from onComplete, which YtDlpService invokes synchronously before
+        // DownloadAsync returns.
+        var outcome = new DownloadResult(false, "Download failed unexpectedly.", "");
+
+        Update(() =>
+        {
+            item.Attempt = attempt;
+            item.Status = DownloadStatus.Downloading;
+
+            // Reset the readout rather than leaving the failed attempt's numbers frozen on the
+            // row. yt-dlp resumes the partial file, so the bar climbs back quickly.
+            item.Percent = 0;
+            item.Speed = "";
+            item.Eta = "";
+        });
+
+        await YtDlp.DownloadAsync(
+            item.Url,
+            Config.Config.DownloadFolder,
+            item.Format,
+            item.WholePlaylist,
+            onProgress: p => Update(() =>
+            {
+                item.Percent = p.Percent;
+                item.Speed = p.Speed;
+                item.Eta = p.Eta;
+
+                // Converting is driven only by yt-dlp's own [ExtractAudio]/[Merger] lines, never
+                // inferred from 100%. An MP4 downloads the video stream to 100% and then the
+                // audio stream from 0%, so treating the first 100% as "merging" would mislabel
+                // the whole second stream.
+                item.Status = DownloadStatus.Downloading;
+            }),
+            onStatus: msg => Update(() =>
+            {
+                if (msg.StartsWith("Converting") || msg.StartsWith("Merging"))
+                    item.Status = DownloadStatus.Converting;
+            }),
+            onMetadata: meta => Update(() =>
+            {
+                if (!string.IsNullOrEmpty(meta.FileName))
+                    item.FileName = meta.FileName;
+
+                if (meta.PlaylistCount > 0)
+                {
+                    item.PlaylistIndex = meta.PlaylistIndex;
+                    item.PlaylistCount = meta.PlaylistCount;
+                }
+            }),
+            onComplete: result => outcome = result,
+            ct: item.Cts.Token
+        );
+
+        return outcome;
+    }
+
+    /// <summary>Waits out the backoff a second at a time so the row can show a live countdown.</summary>
+    private async Task BackOffAsync(DownloadItem item, int attempt, string reason)
+    {
+        for (var remaining = attempt * RetryBackoffSeconds; remaining > 0; remaining--)
+        {
+            var secondsLeft = remaining;
+
+            Update(() =>
+            {
+                item.Status = DownloadStatus.Retrying;
+                item.Message = reason;
+                item.RetryIn = secondsLeft;
+            });
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), item.Cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    private void Commit(DownloadItem item, DownloadResult result)
+    {
+        Update(() =>
+        {
+            if (!string.IsNullOrEmpty(result.FileName))
+                item.FileName = result.FileName;
+
+            item.Folder = Config.Config.DownloadFolder;
+
+            // A row the user already cancelled stays cancelled. Cancel() settles it optimistically
+            // and requests the token from a background thread, so the run can unwind and land here
+            // before IsCancellationRequested has even flipped — without the status check that race
+            // would relabel a deliberate cancellation as a download error.
+            var cancelled = item.Status == DownloadStatus.Cancelled || item.Cts.IsCancellationRequested;
+
+            item.Status = result.Success ? DownloadStatus.Complete
+                : cancelled ? DownloadStatus.Cancelled
+                : DownloadStatus.Error;
+
+            item.Message = item.Status == DownloadStatus.Cancelled ? "" : result.Message;
+            item.Percent = result.Success ? 100 : item.Percent;
+
+            if (item.Status == DownloadStatus.Complete)
+                RememberDownload(item);
+
+            // Clear the box only on success, and only if it still holds this download's URL —
+            // if it failed, that text is what the user needs to retry by hand, and if they have
+            // already typed something else, it is not ours to discard.
+            if (result.Success && string.Equals(_url.Trim(), item.Url, StringComparison.Ordinal))
+            {
+                _url = "";
+                _historyIndex = -1;
+            }
+
+            TrimFinished();
+        });
+    }
+
+    private void Finish(DownloadItem item, DownloadStatus status, string message)
+    {
+        Update(() =>
+        {
+            item.Status = status;
+            item.Message = message;
+            TrimFinished();
+        });
+    }
+
+    private void Cancel(DownloadItem item)
+    {
+        if (!item.IsActive)
+            return;
+
+        // Settle the row here rather than waiting for the process to die. Tearing yt-dlp down can
+        // take a noticeable while — on Windows Kill(entireProcessTree) walks the whole system
+        // process table — and until then the row would sit spinning behind a button that does
+        // nothing on a second press, because the token is already cancelled.
+        Update(() =>
+        {
+            item.Status = DownloadStatus.Cancelled;
+            item.Message = "";
+            item.Percent = 0;
+            item.Speed = "";
+            item.Eta = "";
+
+            TrimFinished();
+        });
+
+        var cts = item.Cts;
+
+        // Off the render thread: Cancel() runs its registered callbacks synchronously on the
+        // calling thread, and one of those callbacks is the process kill.
+        _ = Task.Run(() =>
+        {
+            try { cts.Cancel(); }
+            catch { /* already disposed, or a callback threw */ }
+        });
+    }
+
+    /// <summary>
+    /// Drops the oldest finished rows once the history exceeds <see cref="MaxFinished"/>. Callers
+    /// must already hold <see cref="_sync"/>, so this cannot mutate the list while the pump is
+    /// walking it to build the render tree.
+    /// </summary>
+    private void TrimFinished()
+    {
+        var finished = _downloads.Where(d => !d.IsActive).ToList();
+        if (finished.Count <= MaxFinished)
+            return;
+
+        foreach (var stale in finished.Take(finished.Count - MaxFinished))
+        {
+            _downloads.Remove(stale);
+
+            // Only once the background run has unwound. A cancelled row is marked finished while
+            // its process is still being killed, and disposing the token source out from under
+            // that teardown would fault it.
+            if (stale.Settled)
+                stale.Cts.Dispose();
+        }
     }
 
     private async Task ChangeFolder()
@@ -316,8 +883,7 @@ else if (_status == DownloadStatus.Error)
         var newFolder = await FolderPicker.PickFolderAsync();
         if (string.IsNullOrEmpty(newFolder))
         {
-            _folderMessage = "No folder selected. Your current folder remains unchanged.";
-            _folderMessageColor = Color.MediumPurple1;
+            SetFolderMessage("No folder selected. Your current folder remains unchanged.", Theme.Notice);
             return;
         }
 
@@ -326,24 +892,312 @@ else if (_status == DownloadStatus.Error)
             Directory.CreateDirectory(newFolder);
             Config.Config.DownloadFolder = newFolder;
             await Config.SaveAsync();
-            _folderMessage = "✅ Folder saved!";
-            _folderMessageColor = Color.Green;
+            SetFolderMessage("✓ Folder saved!", Theme.Success);
         }
         catch (Exception ex)
         {
-            _folderMessage = $"❌ Invalid path: {ex.Message}";
-            _folderMessageColor = Color.Red;
+            SetFolderMessage($"✗ Invalid path: {ex.Message}", Theme.Error);
         }
     }
 
     private void OpenDownloadFolder()
     {
-        FolderPicker.OpenFolder(Config.Config.DownloadFolder);
+        if (FolderPicker.OpenFolder(Config.Config.DownloadFolder))
+            return;
+
+        SetFolderMessage($"✗ Could not open {Config.Config.DownloadFolder}", Theme.Error);
+    }
+
+    private void SetFolderMessage(string message, Color color)
+    {
+        int sequence = 0;
+
+        Update(() =>
+        {
+            _folderMessage = message;
+            _folderMessageColor = color;
+
+            // Sequence-stamped so a later message cannot be wiped by an earlier one's expiry.
+            sequence = ++_folderMessageSeq;
+        });
+
+        _ = ExpireFolderMessageAsync(sequence);
+    }
+
+    /// <summary>
+    /// Clears the folder notice after a few seconds. Without this it is set in four places and
+    /// reset in none, so "✓ Folder saved!" stays on screen for the rest of the session.
+    /// </summary>
+    private async Task ExpireFolderMessageAsync(int sequence)
+    {
+        await Task.Delay(FolderMessageLifetime);
+
+        Update(() =>
+        {
+            if (sequence == _folderMessageSeq)
+                _folderMessage = "";
+        });
     }
 
     private void Quit()
     {
-        _cts?.Cancel();
+        // Cancelled inline rather than through Cancel(), which defers the kill to a background
+        // thread: on the way out the processes have to be dead before the app stops, or yt-dlp
+        // and ffmpeg are orphaned and keep writing to the download folder.
+        foreach (var item in _downloads.Where(d => d.IsActive))
+        {
+            try { item.Cts.Cancel(); }
+            catch { /* already disposed, or a callback threw */ }
+        }
+
         AppLifetime.StopApplication();
+    }
+
+    public void Dispose()
+    {
+        _pump?.Cancel();
+        _pump?.Dispose();
+
+        foreach (var item in _downloads)
+        {
+            try
+            {
+                item.Cts.Cancel();
+            }
+            catch
+            {
+                // Already disposed, or a kill callback threw.
+            }
+
+            // Not disposed unless the run has unwound: a still-running teardown holds this token.
+            if (!item.Settled)
+                continue;
+
+            try { item.Cts.Dispose(); }
+            catch (ObjectDisposedException) { /* already disposed by TrimFinished */ }
+        }
+
+        // _slots is deliberately not disposed: nothing ever touches its AvailableWaitHandle, so
+        // it holds no unmanaged resource, and disposing it would fault any RunAsync still parked
+        // in WaitAsync or about to Release.
+    }
+
+    // ---- row rendering -------------------------------------------------------------------
+    //
+    // Each row is a single Markup or Spinner rather than a Columns of coloured fragments:
+    // RazorConsole escapes a component's Content, so inline Spectre colour tags are not an
+    // option and every colour change would cost another cell of unpredictable width.
+
+    /// <summary>
+    /// Recomputes the label/bar split from the live console width. Called once per render rather
+    /// than once per row so a resize mid-download cannot produce rows of differing widths.
+    /// </summary>
+    private static RowLayout Measure()
+    {
+        var width = ConsoleWidth();
+
+        var rowWidth = Math.Max(20, width - 4);
+
+        // What an active row's text may occupy: the full width less the spinner, the trailing
+        // " [ Cancel ]" and the panel border.
+        var activeWidth = Math.Max(16, width - 17);
+
+        // The speed and ETA are the first thing to go when the terminal is too narrow to hold
+        // everything, since the bar and the filename are what the row exists to show.
+        var budget = width - RowChrome - RateWidth;
+        var showRate = budget >= MinLabel + MinBar;
+
+        if (!showRate)
+            budget = width - RowChrome;
+
+        budget = Math.Max(MinLabel + MinBar, budget);
+
+        // The bar takes the minority share: past roughly 40 cells it stops conveying anything
+        // new, whereas a longer label is what actually tells two downloads apart.
+        var barWidth = Math.Clamp(budget * 2 / 5, MinBar, 40);
+        var labelWidth = Math.Clamp(budget - barWidth, MinLabel, 64);
+
+        return new RowLayout(labelWidth, barWidth, rowWidth, activeWidth, showRate);
+    }
+
+    private static int ConsoleWidth()
+    {
+        try
+        {
+            var width = Spectre.Console.AnsiConsole.Profile.Width;
+            return width > 0 ? width : 80;
+        }
+        catch
+        {
+            // Redirected or otherwise unmeasurable output.
+            return 80;
+        }
+    }
+
+    private static Spectre.Console.Spinner SpinnerFor(DownloadItem item) =>
+        item.Status is DownloadStatus.Queued or DownloadStatus.Retrying
+            || (item.Status == DownloadStatus.Downloading && item.Percent <= 0)
+            ? Spectre.Console.Spinner.Known.Dots2
+            : Spectre.Console.Spinner.Known.Binary;
+
+    // Clipped to the measured width so no row can ever push the panel border off screen. The
+    // downloading row is already sized to fit, so the clip only ever bites on the free-text ones.
+    private static string ActiveLine(DownloadItem item, RowLayout layout) => Truncate(item.Status switch
+    {
+        DownloadStatus.Queued =>
+            $"{Fit(LabelOf(item), layout.Label)}  Queued",
+
+        // The countdown comes before the reason: it is the part worth keeping when the reason
+        // is long enough to be clipped.
+        DownloadStatus.Retrying =>
+            $"{Fit(LabelOf(item), layout.Label)}  Retry {item.Attempt + 1}/{MaxAttempts} in {item.RetryIn}s — {item.Message}",
+
+        DownloadStatus.Converting =>
+            $"{Fit(LabelOf(item), layout.Label)}  {Bar(100, layout)}  {(item.Format == DownloadFormat.Mp3 ? "Converting" : "Merging")}",
+
+        _ =>
+            $"{Fit(LabelOf(item), layout.Label)}  {Bar(item.Percent, layout)}  {item.Percent,5:F1}%{Rate(item, layout)}",
+    }, layout.Active);
+
+    private static string FinishedLine(DownloadItem item, RowLayout layout) => item.Status switch
+    {
+        DownloadStatus.Complete when item.IsPlaylist =>
+            Truncate($"✓ Saved {item.PlaylistCount} files  →  {Shorten(item.Folder)}", layout.Row),
+
+        DownloadStatus.Complete when !string.IsNullOrEmpty(item.FileName) =>
+            Truncate($"✓ Saved  {item.FileName}  →  {Shorten(item.Folder)}", layout.Row),
+
+        DownloadStatus.Complete =>
+            Truncate($"✓ Saved to {Shorten(item.Folder)}", layout.Row),
+
+        DownloadStatus.Cancelled =>
+            Truncate($"– Cancelled  {Fit(LabelOf(item), layout.Label).TrimEnd()}", layout.Row),
+
+        // Deliberately not truncated: an error is the one row where losing the tail of the text
+        // costs the user the reason, so a long message is left to wrap onto a second line.
+        _ =>
+            $"✗ {item.Message}",
+    };
+
+    private static Color FinishedColor(DownloadItem item) => item.Status switch
+    {
+        DownloadStatus.Complete => Theme.Success,
+        DownloadStatus.Cancelled => Theme.Muted,
+        _ => Theme.Error,
+    };
+
+    private static string Rate(DownloadItem item, RowLayout layout)
+    {
+        if (!layout.ShowRate)
+            return "";
+
+        var speed = CompactSpeed(item.Speed);
+
+        if (string.IsNullOrEmpty(speed) && string.IsNullOrEmpty(item.Eta))
+            return "";
+
+        if (string.IsNullOrEmpty(item.Eta))
+            return $"  {speed}";
+
+        if (string.IsNullOrEmpty(speed))
+            return $"  ETA {item.Eta}";
+
+        return $"  {speed} · {item.Eta}";
+    }
+
+    /// <summary>
+    /// Trims yt-dlp's two-decimal rate to at most one significant decimal ("850.00KiB/s" becomes
+    /// "850KiB/s"). Those three characters are what keeps a slow download with an hours-long ETA
+    /// inside 80 columns.
+    /// </summary>
+    private static string CompactSpeed(string speed)
+    {
+        if (string.IsNullOrEmpty(speed))
+            return speed;
+
+        var digits = 0;
+        while (digits < speed.Length && (char.IsAsciiDigit(speed[digits]) || speed[digits] == '.'))
+            digits++;
+
+        if (digits == 0 || !double.TryParse(
+                speed[..digits], NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+            return speed;
+
+        var unit = speed[digits..];
+        return value >= 100 ? $"{value:F0}{unit}" : $"{value:F1}{unit}";
+    }
+
+    private static string Bar(double percent, RowLayout layout)
+    {
+        // Floor, not round: at 99.9% a rounded bar is already full, which reads as finished.
+        var filled = (int)Math.Floor(Math.Clamp(percent, 0, 100) / 100d * layout.Bar);
+        return new string('█', filled) + new string('░', layout.Bar - filled);
+    }
+
+    /// <summary>
+    /// Display width in terminal cells. Measured with Spectre's own counter rather than
+    /// string.Length, because one CJK glyph occupies two columns: a Japanese track title padded
+    /// by character count pushes the bar right and breaks the column alignment of every row.
+    /// </summary>
+    private static int CellWidth(string text) =>
+        Spectre.Console.Rendering.Segment.CellCount([new Spectre.Console.Rendering.Segment(text)]);
+
+    /// <summary>Truncates to at most <paramref name="width"/> cells, marking any cut with an ellipsis.</summary>
+    private static string Truncate(string text, int width)
+    {
+        if (width <= 0 || string.IsNullOrEmpty(text))
+            return "";
+
+        if (CellWidth(text) <= width)
+            return text;
+
+        var end = 0;
+        var used = 0;
+
+        while (end < text.Length)
+        {
+            // Surrogate pairs advance two chars but measure as one glyph.
+            var step = char.IsSurrogatePair(text, end) ? 2 : 1;
+            var cells = CellWidth(text.Substring(end, step));
+
+            if (used + cells > width - 1)
+                break;
+
+            used += cells;
+            end += step;
+        }
+
+        return string.Concat(text.AsSpan(0, end), "…");
+    }
+
+    /// <summary>Pads or ellipsises to an exact cell width so bars line up across rows.</summary>
+    private static string Fit(string text, int width)
+    {
+        if (string.IsNullOrEmpty(text))
+            return new string(' ', width);
+
+        var trimmed = Truncate(text, width);
+        return trimmed + new string(' ', Math.Max(0, width - CellWidth(trimmed)));
+    }
+
+    /// <summary>
+    /// A "list=" parameter is what makes yt-dlp expand a link into a whole playlist, and it rides
+    /// along on most URLs copied from YouTube while a playlist is open.
+    /// </summary>
+    private static bool HasPlaylist(string url) =>
+        url.Contains("list=", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Row label, prefixed with the playlist position once one is known.</summary>
+    private static string LabelOf(DownloadItem item) =>
+        item.IsPlaylist ? $"{item.PlaylistIndex}/{item.PlaylistCount} {item.Label}" : item.Label;
+
+    /// <summary>Collapses the home directory to <c>~</c> so paths fit an 80-column terminal.</summary>
+    private static string Shorten(string path)
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        return !string.IsNullOrEmpty(home) && path.StartsWith(home, StringComparison.OrdinalIgnoreCase)
+            ? string.Concat("~", path.AsSpan(home.Length))
+            : path;
     }
 }

@@ -73,17 +73,38 @@ public class FolderPickerService
         }
     }
 
-    public void OpenFolder(string path)
+    /// <summary>Reveals <paramref name="path"/> in the system file manager. False if that was not possible.</summary>
+    public bool OpenFolder(string path)
     {
-        if (!Directory.Exists(path))
+        try
+        {
             Directory.CreateDirectory(path);
 
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            Process.Start("explorer.exe", path);
-        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            Process.Start("open", path);
-        else
-            Process.Start("xdg-open", path);
+            var opener =
+                RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "explorer.exe"
+                : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "open"
+                : "xdg-open";
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = opener,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            // ArgumentList quotes for us, so a download folder containing spaces
+            // does not arrive at the file manager split into several arguments.
+            psi.ArgumentList.Add(path);
+
+            using var process = Process.Start(psi);
+            return process is not null;
+        }
+        catch
+        {
+            // A headless Linux box has no xdg-open, and the path may be uncreatable.
+            // Neither is worth taking the UI down for: this runs straight off a click.
+            return false;
+        }
     }
 
     private static async Task<bool> CommandExistsAsync(string command)

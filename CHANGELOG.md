@@ -9,6 +9,9 @@
 - The error shown for a blocked request now points at the update button instead of implying the site made a permission decision. A sign-in check is no longer retried, because retrying it never worked.
 
 ### Interface
+- The downloads list now starts empty each session. Completed downloads were being written to `config.json` and restored on the next launch, so the list kept showing files from previous sessions with no way to clear it.
+- Naptrack clears the terminal on launch, so the previous commands are not left sitting behind and above the UI.
+- Fixed a "Setup Failed — yt-dlp could not be downloaded automatically" message appearing straight after an update that had in fact succeeded. Re-checking the dependencies cleared the installed flags before re-probing, and the probes take long enough that the UI repainted several times against that empty state.
 - The URL box now empties as soon as a download starts, ready for the next link. It used to hold the text until the download succeeded. The link still goes to the top of the history, so **↑** brings it straight back if it needs another go.
 - Esc, **↑** and **↓** had no effect on the URL box. All three changed the value behind the scenes but never asked for a repaint, and the input only re-reads its value when it is handed one — so the box kept showing the old text no matter what you pressed.
 - The controls between the URL box and the downloads list are no longer centred one cluster at a time. Format, playlist, folder and yt-dlp now share a single left-aligned label column, with the download choices and the folder/tooling rows separated into two groups.

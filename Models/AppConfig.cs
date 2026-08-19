@@ -11,9 +11,6 @@ public class AppConfig
     /// <summary>URLs recalled with the up arrow, oldest first.</summary>
     public List<string> RecentUrls { get; set; } = [];
 
-    /// <summary>Completed downloads shown in the list on a fresh start, oldest first.</summary>
-    public List<RecentDownload> RecentDownloads { get; set; } = [];
-
     /// <summary>Latest stable version seen on nuget.org, cached so startup does not wait on the network.</summary>
     public string? LatestKnownVersion { get; set; }
 
@@ -31,11 +28,4 @@ public class AppConfig
     /// per-launch.
     /// </summary>
     public DateTimeOffset? YtDlpLastCheckUtc { get; set; }
-}
-
-/// <summary>A finished download, kept only so the list is not empty on a fresh start.</summary>
-public class RecentDownload
-{
-    public string FileName { get; set; } = "";
-    public string Folder { get; set; } = "";
 }

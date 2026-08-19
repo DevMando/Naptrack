@@ -424,40 +424,12 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         await Config.LoadAsync();
 
         _format = Config.Config.Format;
-        RestoreRecentDownloads();
 
         // Deliberately not awaited: a slow or unreachable nuget.org must never
         // delay dependency setup or the first paint.
         _ = RefreshUpdateStatusAsync();
 
         await RunSetup();
-    }
-
-    /// <summary>
-    /// Seeds the list with the previous session's completions so a fresh start is not a blank
-    /// panel. They are inert rows: already settled, with no process or token behind them.
-    /// </summary>
-    private void RestoreRecentDownloads()
-    {
-        // Through Update like every other mutation: the pump is already ticking by the time the
-        // config finishes loading, so this list is live the moment it is touched.
-        Update(() =>
-        {
-            foreach (var recent in Config.Config.RecentDownloads.TakeLast(MaxFinished))
-            {
-                _downloads.Add(new DownloadItem
-                {
-                    Id = _nextId++,
-                    Url = "",
-                    Format = Config.Config.Format,
-                    Status = DownloadStatus.Complete,
-                    FileName = recent.FileName,
-                    Folder = recent.Folder,
-                    Percent = 100,
-                    Settled = true,
-                });
-            }
-        });
     }
 
     private async Task SetFormat(DownloadFormat format)
@@ -704,20 +676,6 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         _ = SaveConfigAsync();
     }
 
-    private void RememberDownload(DownloadItem item)
-    {
-        if (string.IsNullOrEmpty(item.FileName))
-            return;
-
-        var recent = Config.Config.RecentDownloads;
-        recent.Add(new RecentDownload { FileName = item.FileName, Folder = item.Folder });
-
-        while (recent.Count > MaxFinished)
-            recent.RemoveAt(0);
-
-        _ = SaveConfigAsync();
-    }
-
     private void StartDownload()
     {
         var url = _url.Trim();
@@ -957,9 +915,6 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
 
             item.Message = item.Status == DownloadStatus.Cancelled ? "" : result.Message;
             item.Percent = result.Success ? 100 : item.Percent;
-
-            if (item.Status == DownloadStatus.Complete)
-                RememberDownload(item);
 
             TrimFinished();
         });

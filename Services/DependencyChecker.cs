@@ -59,18 +59,18 @@ public class DependencyChecker
 
     public async Task CheckAsync()
     {
-        // Cleared first, because this now runs more than once per session: after an update, and
-        // again whenever setup is retried. Carrying the previous answer forward would report a
-        // binary that had just been replaced -- or one that is no longer there at all -- as
-        // still installed, at the exact version it used to be.
-        IsYtDlpInstalled = false;
-        IsFfmpegInstalled = false;
-        IsYtDlpManaged = false;
-        YtDlpVersion = "";
-        YtDlpPath = "";
-        FfmpegPath = "";
-        SupportsJsRuntimes = false;
-        JsRuntime = null;
+        // Everything is resolved into locals and published in one go at the end.
+        //
+        // This runs more than once per session -- after an update, and whenever setup is retried
+        // -- so the previous answer cannot simply be carried forward. But clearing the fields up
+        // front and filling them back in as each probe returns is worse: the probes spawn
+        // processes and take a second or more, and the render pump repaints ten times a second
+        // throughout. A UI reading these mid-check saw "not installed" and told the user setup
+        // had failed, moments after a download that had actually succeeded.
+        var ytDlpInstalled = false;
+        var ytDlpManaged = false;
+        var ytDlpVersion = "";
+        var ytDlpPath = "";
 
         // Check local bin folder first, then system PATH
         if (_downloader.YtDlpExists)
@@ -78,41 +78,54 @@ public class DependencyChecker
             var (ok, ver) = await CheckCommandAsync(_downloader.YtDlpPath, "--version");
             if (ok)
             {
-                IsYtDlpInstalled = true;
-                IsYtDlpManaged = true;
-                YtDlpVersion = ver;
-                YtDlpPath = _downloader.YtDlpPath;
+                ytDlpInstalled = true;
+                ytDlpManaged = true;
+                ytDlpVersion = ver;
+                ytDlpPath = _downloader.YtDlpPath;
             }
         }
 
-        if (!IsYtDlpInstalled)
+        if (!ytDlpInstalled)
         {
             var (ok, ver) = await CheckCommandAsync("yt-dlp", "--version");
-            IsYtDlpInstalled = ok;
-            IsYtDlpManaged = false;
-            YtDlpVersion = ver;
-            YtDlpPath = ok ? "yt-dlp" : "";
+            ytDlpInstalled = ok;
+            ytDlpManaged = false;
+            ytDlpVersion = ver;
+            ytDlpPath = ok ? "yt-dlp" : "";
         }
 
-        if (IsYtDlpInstalled)
-            await ProbeJsRuntimeAsync();
+        var (supportsJsRuntimes, jsRuntime) = ytDlpInstalled
+            ? await ProbeJsRuntimeAsync(ytDlpPath)
+            : (false, null);
+
+        var ffmpegInstalled = false;
+        var ffmpegPath = "";
 
         if (_downloader.FfmpegExists)
         {
             var (ok, _) = await CheckCommandAsync(_downloader.FfmpegPath, "-version");
             if (ok)
             {
-                IsFfmpegInstalled = true;
-                FfmpegPath = _downloader.FfmpegPath;
+                ffmpegInstalled = true;
+                ffmpegPath = _downloader.FfmpegPath;
             }
         }
 
-        if (!IsFfmpegInstalled)
+        if (!ffmpegInstalled)
         {
             var (ok, _) = await CheckCommandAsync("ffmpeg", "-version");
-            IsFfmpegInstalled = ok;
-            FfmpegPath = ok ? "ffmpeg" : "";
+            ffmpegInstalled = ok;
+            ffmpegPath = ok ? "ffmpeg" : "";
         }
+
+        IsYtDlpInstalled = ytDlpInstalled;
+        IsYtDlpManaged = ytDlpManaged;
+        YtDlpVersion = ytDlpVersion;
+        YtDlpPath = ytDlpPath;
+        SupportsJsRuntimes = supportsJsRuntimes;
+        JsRuntime = jsRuntime;
+        IsFfmpegInstalled = ffmpegInstalled;
+        FfmpegPath = ffmpegPath;
 
         Checked = true;
     }
@@ -197,15 +210,13 @@ public class DependencyChecker
         }
     }
 
-    private async Task ProbeJsRuntimeAsync()
+    private async Task<(bool Supported, string? Runtime)> ProbeJsRuntimeAsync(string ytDlpPath)
     {
         // A --help that will not run says nothing about flag support, and HelpMentionsJsRuntimes
         // already reports false for that case: the flag is an optimisation, and going without it
         // costs only format coverage.
-        SupportsJsRuntimes = await HelpMentionsJsRuntimesAsync();
-
-        if (!SupportsJsRuntimes)
-            return;
+        if (!await HelpMentionsJsRuntimesAsync(ytDlpPath))
+            return (false, null);
 
         // deno is omitted on purpose: yt-dlp enables it by default, so naming it would only
         // restrict the set it was already going to consider.
@@ -215,20 +226,19 @@ public class DependencyChecker
         {
             var (ok, _) = await CheckCommandAsync(candidate, "--version");
             if (ok)
-            {
-                JsRuntime = candidate;
-                return;
-            }
+                return (true, candidate);
         }
+
+        return (true, null);
     }
 
-    private async Task<bool> HelpMentionsJsRuntimesAsync()
+    private async Task<bool> HelpMentionsJsRuntimesAsync(string ytDlpPath)
     {
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = YtDlpPath,
+                FileName = ytDlpPath,
                 Arguments = "--help",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

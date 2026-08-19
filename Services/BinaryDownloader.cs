@@ -1,10 +1,25 @@
 using System.IO.Compression;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace Naptrack.Services;
 
 public class BinaryDownloader
 {
+    /// <summary>
+    /// Nightly builds rather than stable releases.
+    ///
+    /// YouTube changes what it accepts on no schedule, and stable yt-dlp ships every few weeks.
+    /// Every gap between the two is a window where downloads fail with "HTTP Error 403" on the
+    /// media request even though extraction succeeded -- the exact symptom that looks to a user
+    /// like being blocked. The nightly channel closes that window: it is the same code that
+    /// becomes the next stable, published as it lands, and it is what yt-dlp's own maintainers
+    /// point at when a site breaks mid-cycle.
+    /// </summary>
+    private const string YtDlpRepo = "yt-dlp/yt-dlp-nightly-builds";
+
+    private const string LatestReleaseApiUrl = $"https://api.github.com/repos/{YtDlpRepo}/releases/latest";
+
     private static readonly string BinDir =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Naptrack", "bin");
 
@@ -32,19 +47,70 @@ public class BinaryDownloader
         var url = GetYtDlpDownloadUrl();
         onStatus?.Invoke("Downloading yt-dlp...");
 
+        // Staged through a temp file and moved into place, rather than written straight to
+        // YtDlpPath. A refresh replaces a binary that already works, and a download that dies
+        // half way through would otherwise leave a truncated exe where the working one was --
+        // turning "your yt-dlp is a few weeks old" into "Naptrack no longer runs at all".
+        var staging = YtDlpPath + ".download";
+
         try
         {
-            var bytes = await Http.GetByteArrayAsync(url, ct);
-            await File.WriteAllBytesAsync(YtDlpPath, bytes, ct);
+            using (var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct))
+            {
+                response.EnsureSuccessStatusCode();
+
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                await using var file = File.Create(staging);
+                await stream.CopyToAsync(file, ct);
+            }
+
+            File.Move(staging, YtDlpPath, overwrite: true);
             MakeExecutable(YtDlpPath);
             onStatus?.Invoke("yt-dlp downloaded successfully.");
             return true;
         }
         catch (Exception ex)
         {
+            // Windows refuses to replace a file that is still mapped by a running process, so a
+            // refresh attempted while a download is in flight lands here. The existing binary is
+            // untouched and the next launch retries, which is the right outcome either way.
+            TryDelete(staging);
             onStatus?.Invoke($"Failed to download yt-dlp: {ex.Message}");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Tag of the most recent published yt-dlp build, or null when GitHub cannot be reached or
+    /// answers in a shape this does not recognise. Costs one small request, which is what makes
+    /// it worth doing before committing to a ~17MB binary download.
+    /// </summary>
+    public async Task<string?> FetchLatestYtDlpVersionAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await Http.GetAsync(LatestReleaseApiUrl, ct);
+            response.EnsureSuccessStatusCode();
+
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+
+            return document.RootElement.TryGetProperty("tag_name", out var tag)
+                ? tag.GetString()
+                : null;
+        }
+        catch
+        {
+            // Offline, rate limited, or the response changed shape. The caller treats an unknown
+            // remote version as "nothing to compare against" and leaves the local binary alone.
+            return null;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { File.Delete(path); }
+        catch { /* best effort */ }
     }
 
     public async Task<bool> DownloadFfmpegAsync(Action<string>? onStatus = null, CancellationToken ct = default)
@@ -93,7 +159,7 @@ public class BinaryDownloader
 
     private static string GetYtDlpDownloadUrl()
     {
-        const string baseUrl = "https://github.com/yt-dlp/yt-dlp/releases/latest/download";
+        const string baseUrl = $"https://github.com/{YtDlpRepo}/releases/latest/download";
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             return $"{baseUrl}/yt-dlp.exe";

@@ -10,13 +10,13 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>naptrack</ToolCommandName>
     <PackageId>Naptrack</PackageId>
-    <Version>1.0.3</Version>
+    <Version>1.0.4</Version>
     <Authors>DevMando</Authors>
     <Description>Grab audio and video from the web. A TUI app to download MP3/MP4 from YouTube, TikTok, Instagram, Facebook, and 1000+ sites.</Description>
     <PackageProjectUrl>https://github.com/DevMando/Naptrack</PackageProjectUrl>
     <PackageTags>youtube;mp3;mp4;audio;video;downloader;tui;cli;tiktok;instagram</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>v1.0.3 - Queue several downloads at once, each with its own progress bar, speed, ETA and Cancel button. Playlist links no longer expand into the whole playlist unless you ask. Adds URL history, automatic retries on transient blocks, and a persisted download folder, format and history. Fixes a crash when navigating during a download, progress stuck at 0% on comma-decimal locales, and mislabelled MP4 conversion.</PackageReleaseNotes>
+    <PackageReleaseNotes>v1.0.4 - Fixes downloads failing with "Access denied" or what looked like being blocked. yt-dlp was fetched once on first run and never updated, so every install eventually fell far enough behind the sites it talks to that the media request came back 403 with no way to fix it from inside the app. yt-dlp now tracks the nightly channel, is checked once a day and updated automatically, and its version is shown in the app with a button to update it on demand. A stale system-installed yt-dlp is replaced with a managed copy. Node or Bun is used as a JavaScript runtime for YouTube when available. Interrupted updates can no longer leave a truncated binary behind.</PackageReleaseNotes>
     <PackageReadmeFile>README.md</PackageReadmeFile>
 
     <!-- Self-contained publish (for standalone binaries) -->

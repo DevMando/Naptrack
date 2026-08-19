@@ -17,6 +17,7 @@ IHostBuilder hostBuilder = Host.CreateDefaultBuilder(args)
             services.AddSingleton<UpdateChecker>();
             services.AddSingleton<BinaryDownloader>();
             services.AddSingleton<DependencyChecker>();
+            services.AddSingleton<YtDlpUpdater>();
             services.AddSingleton<YtDlpService>();
             services.AddSingleton<FolderPickerService>();
         });

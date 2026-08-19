@@ -18,6 +18,19 @@ public class AppConfig
     public string? LatestKnownVersion { get; set; }
 
     public DateTimeOffset? LastUpdateCheckUtc { get; set; }
+
+    /// <summary>
+    /// Version string of the yt-dlp Naptrack manages, as reported by <c>--version</c>. Recorded so
+    /// a refresh can be skipped when the published build has not moved on since the last check.
+    /// </summary>
+    public string? YtDlpVersion { get; set; }
+
+    /// <summary>
+    /// When the managed yt-dlp was last compared against the published build. Throttles the check
+    /// to once a day: yt-dlp publishes most days, but a fresh binary matters per-session, not
+    /// per-launch.
+    /// </summary>
+    public DateTimeOffset? YtDlpLastCheckUtc { get; set; }
 }
 
 /// <summary>A finished download, kept only so the list is not empty on a fresh start.</summary>

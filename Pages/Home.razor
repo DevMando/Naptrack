@@ -1,15 +1,14 @@
 @page "/"
 @using System.Globalization
-@using Microsoft.Extensions.Hosting
 @using Naptrack.Models
 @using Naptrack.Services
 
 @implements IDisposable
 
-@inject IHostApplicationLifetime AppLifetime
 @inject ConfigService Config
 @inject UpdateChecker Updater
 @inject DependencyChecker DepChecker
+@inject YtDlpUpdater YtDlpUpdate
 @inject BinaryDownloader Downloader
 @inject YtDlpService YtDlp
 @inject FolderPickerService FolderPicker
@@ -76,53 +75,55 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
            Expand="true"
            FocusOrder="1" />
 
+@* Controls sit left, under the URL box, sharing one label column. Centring each cluster
+   independently produced three different centre points beneath a full-width input, so no two
+   rows shared an edge and the whole group read as clutter rather than as a set of choices. *@
+
 @* Selection is carried by the marker, not by colour: the background is what shows focus, so
    encoding both in colour made a focused-but-unselected option look active. *@
-<Align Horizontal="HorizontalAlignment.Center">
-    <Columns>
-        <TextButton Content="@(_format == DownloadFormat.Mp3 ? "● MP3" : "○ MP3")"
-                    OnClick="() => SetFormat(DownloadFormat.Mp3)"
-                    BackgroundColor="Theme.Surface"
-                    FocusedColor="Theme.Focus" />
-        <TextButton Content="@(_format == DownloadFormat.Mp4 ? "● MP4" : "○ MP4")"
-                    OnClick="() => SetFormat(DownloadFormat.Mp4)"
-                    BackgroundColor="Theme.Surface"
-                    FocusedColor="Theme.Focus" />
-    </Columns>
-</Align>
+<Columns>
+    <Markup Content="@Field("Format")" Foreground="Theme.Muted" />
+    <TextButton Content="@(_format == DownloadFormat.Mp3 ? "● MP3" : "○ MP3")"
+                OnClick="() => SetFormat(DownloadFormat.Mp3)"
+                BackgroundColor="Theme.Surface"
+                FocusedColor="Theme.Focus" />
+    <TextButton Content="@(_format == DownloadFormat.Mp4 ? "● MP4" : "○ MP4")"
+                OnClick="() => SetFormat(DownloadFormat.Mp4)"
+                BackgroundColor="Theme.Surface"
+                FocusedColor="Theme.Focus" />
+    <TextButton Content="[ Download ]"
+                OnClick="StartDownload"
+                BackgroundColor="Theme.Surface"
+                FocusedColor="Theme.Focus" />
+</Columns>
 
 @* Shown only for a link that carries a playlist, so the choice appears exactly when it matters
    and never becomes hidden state that silently changes what the next download does. *@
 @if (HasPlaylist(_url))
 {
-    <Align Horizontal="HorizontalAlignment.Center">
-        <Columns>
-            <Markup Content="Playlist link:" Foreground="Theme.Warn" />
-            <TextButton Content="@(_wholePlaylist ? "○ This video only" : "● This video only")"
-                        OnClick="() => _wholePlaylist = false"
-                        BackgroundColor="Theme.Surface"
-                        FocusedColor="Theme.Focus" />
-            <TextButton Content="@(_wholePlaylist ? "● Whole playlist" : "○ Whole playlist")"
-                        OnClick="() => _wholePlaylist = true"
-                        BackgroundColor="Theme.Surface"
-                        FocusedColor="Theme.Focus" />
-        </Columns>
-    </Align>
+    <Columns>
+        <Markup Content="@Field("Playlist")" Foreground="Theme.Warn" />
+        <TextButton Content="@(_wholePlaylist ? "○ This video only" : "● This video only")"
+                    OnClick="() => _wholePlaylist = false"
+                    BackgroundColor="Theme.Surface"
+                    FocusedColor="Theme.Focus" />
+        <TextButton Content="@(_wholePlaylist ? "● Whole playlist" : "○ Whole playlist")"
+                    OnClick="() => _wholePlaylist = true"
+                    BackgroundColor="Theme.Surface"
+                    FocusedColor="Theme.Focus" />
+    </Columns>
 }
-
-<Align Horizontal="HorizontalAlignment.Center">
-    <TextButton Content="[ Download ]"
-                OnClick="StartDownload"
-                BackgroundColor="Theme.Surface"
-                FocusedColor="Theme.Focus" />
-</Align>
 
 @* Always rendered, blank when there is nothing to say, so submitting a URL never
    shifts the rows below it out from under the cursor. *@
 <Markup Content="@_formMessage" Foreground="Theme.Error" />
 
+@* Where files go and what is doing the work: a different question from what to download, so it
+   gets its own group rather than another identically-spaced row. *@
+<Newline />
+
 <Columns>
-    <Markup Content="Download folder:" Foreground="Theme.Muted" />
+    <Markup Content="@Field("Folder")" Foreground="Theme.Muted" />
     <TextButton Content="@Shorten(Config.Config.DownloadFolder)"
                 OnClick="OpenDownloadFolder"
                 BackgroundColor="Theme.Surface"
@@ -131,15 +132,31 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
                 OnClick="ChangeFolder"
                 BackgroundColor="Theme.Surface"
                 FocusedColor="Theme.Focus" />
-    <TextButton Content="[ Quit ]"
-                OnClick="Quit"
-                BackgroundColor="Theme.Surface"
-                FocusedColor="Theme.Focus" />
 </Columns>
 
 @if (!string.IsNullOrEmpty(_folderMessage))
 {
     <Markup Content="@_folderMessage" Foreground="@_folderMessageColor" />
+}
+
+@* The downloader's own version, surfaced deliberately. When a site starts refusing downloads
+   this is the first thing that matters, and before it was on screen there was no way to tell a
+   genuinely unavailable video from a yt-dlp that had simply gone stale. *@
+@if (_depsChecked && DepChecker.IsYtDlpInstalled)
+{
+    <Columns>
+        <Markup Content="@Field("yt-dlp")" Foreground="Theme.Muted" />
+        <Markup Content="@YtDlpStatusText" Foreground="@YtDlpStatusColor" />
+        <TextButton Content="@(_ytDlpUpdating ? "[ Updating... ]" : "[ Update ]")"
+                    OnClick="UpdateYtDlpAsync"
+                    BackgroundColor="Theme.Surface"
+                    FocusedColor="Theme.Focus" />
+    </Columns>
+}
+
+@if (!string.IsNullOrEmpty(_ytDlpMessage))
+{
+    <Markup Content="@_ytDlpMessage" Foreground="@_ytDlpMessageColor" />
 }
 
 @if (_downloads.Count > 0)
@@ -210,12 +227,14 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         "╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝        ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝",
     ];
 
+    // Ctrl+C is listed because it is now the only way out: the Quit button is gone, and Esc
+    // clears the URL box rather than exiting.
     private static readonly string _shortcuts =
         System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
-            ? "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Ctrl+V: paste"
+            ? "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Ctrl+V: paste  |  Ctrl+C: quit"
         : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
-            ? "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Cmd+V: paste"
-            : "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Ctrl+Shift+V: paste";
+            ? "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Cmd+V: paste  |  Ctrl+C: quit"
+            : "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Ctrl+Shift+V: paste  |  Ctrl+C: quit";
 
     /// <summary>
     /// Parallel yt-dlp runs past this point mostly fight each other for bandwidth, and each one
@@ -310,6 +329,40 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
     private bool _setupInProgress;
     private string _setupMessage = "";
 
+    private bool _ytDlpUpdating;
+    private string _ytDlpMessage = "";
+    private Color _ytDlpMessageColor = Theme.Muted;
+
+    private string YtDlpStatusText
+    {
+        get
+        {
+            var version = string.IsNullOrWhiteSpace(DepChecker.YtDlpVersion)
+                ? "unknown version"
+                : DepChecker.YtDlpVersion;
+
+            var source = DepChecker.IsYtDlpManaged ? "" : " (system)";
+
+            return DepChecker.IsYtDlpStale
+                ? $"{version}{source} - out of date"
+                : $"{version}{source}";
+        }
+    }
+
+    private Color YtDlpStatusColor => DepChecker.IsYtDlpStale ? Theme.Warn : Theme.Muted;
+
+    /// <summary>
+    /// Width every row label is padded to. The label column is what makes the rows line up, so
+    /// it has to be wider than the longest label ("Playlist") with a gap left over.
+    /// </summary>
+    private const int LabelWidth = 10;
+
+    /// <summary>
+    /// Pads a row label so every control starts at the same column. Indented by two so the block
+    /// sits inside the URL box's border rather than flush against the terminal edge.
+    /// </summary>
+    private static string Field(string label) => "  " + label.PadRight(LabelWidth);
+
     private string DownloadsTitle
     {
         get
@@ -371,40 +424,12 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         await Config.LoadAsync();
 
         _format = Config.Config.Format;
-        RestoreRecentDownloads();
 
         // Deliberately not awaited: a slow or unreachable nuget.org must never
         // delay dependency setup or the first paint.
         _ = RefreshUpdateStatusAsync();
 
         await RunSetup();
-    }
-
-    /// <summary>
-    /// Seeds the list with the previous session's completions so a fresh start is not a blank
-    /// panel. They are inert rows: already settled, with no process or token behind them.
-    /// </summary>
-    private void RestoreRecentDownloads()
-    {
-        // Through Update like every other mutation: the pump is already ticking by the time the
-        // config finishes loading, so this list is live the moment it is touched.
-        Update(() =>
-        {
-            foreach (var recent in Config.Config.RecentDownloads.TakeLast(MaxFinished))
-            {
-                _downloads.Add(new DownloadItem
-                {
-                    Id = _nextId++,
-                    Url = "",
-                    Format = Config.Config.Format,
-                    Status = DownloadStatus.Complete,
-                    FileName = recent.FileName,
-                    Folder = recent.Folder,
-                    Percent = 100,
-                    Settled = true,
-                });
-            }
-        });
     }
 
     private async Task SetFormat(DownloadFormat format)
@@ -468,6 +493,21 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             await DepChecker.CheckAsync();
         }
 
+        // Freshness, not just presence. A yt-dlp that exists but is weeks old is the most common
+        // cause of a download that fails as though the site had blocked the user, and until this
+        // ran the binary fetched on first install was never looked at again.
+        if (DepChecker.IsYtDlpInstalled)
+        {
+            var outcome = await YtDlpUpdate.EnsureCurrentAsync(
+                force: false,
+                onStatus: msg => Update(() => _setupMessage = msg));
+
+            // The version on screen comes from the binary itself, so it has to be re-read before
+            // the status line can be trusted.
+            if (outcome == YtDlpUpdater.Outcome.Updated)
+                await DepChecker.CheckAsync();
+        }
+
         Update(() =>
         {
             _setupInProgress = false;
@@ -479,17 +519,88 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         });
     }
 
+    /// <summary>
+    /// Fetches the newest yt-dlp on demand, ignoring the once-a-day throttle. This is the button
+    /// the error messages point at: someone staring at "Access denied" wants the current binary
+    /// now, not to be told Naptrack already checked this morning.
+    /// </summary>
+    private async Task UpdateYtDlpAsync()
+    {
+        if (_ytDlpUpdating)
+            return;
+
+        // Windows will not replace a binary that a running process still has mapped, and the
+        // failure would land as an unexplained "could not update" rather than anything the user
+        // could act on. Saying so up front is the honest version.
+        if (_downloads.Any(d => d.IsActive))
+        {
+            ShowYtDlpMessage("Finish or cancel the downloads in progress first.", Theme.Warn);
+            return;
+        }
+
+        Update(() =>
+        {
+            _ytDlpUpdating = true;
+            _ytDlpMessage = "";
+        });
+
+        var outcome = await YtDlpUpdate.EnsureCurrentAsync(
+            force: true,
+            onStatus: msg => Update(() =>
+            {
+                _ytDlpMessage = msg;
+                _ytDlpMessageColor = Theme.Muted;
+            }));
+
+        await DepChecker.CheckAsync();
+
+        Update(() => _ytDlpUpdating = false);
+
+        switch (outcome)
+        {
+            case YtDlpUpdater.Outcome.Updated:
+                ShowYtDlpMessage($"yt-dlp updated to {DepChecker.YtDlpVersion}.", Theme.Success);
+                break;
+
+            case YtDlpUpdater.Outcome.Failed:
+                ShowYtDlpMessage("Could not update yt-dlp. Check your connection and try again.", Theme.Error);
+                break;
+
+            default:
+                ShowYtDlpMessage("yt-dlp is already up to date.", Theme.Muted);
+                break;
+        }
+    }
+
+    private void ShowYtDlpMessage(string message, Color color)
+    {
+        Update(() =>
+        {
+            _ytDlpMessage = message;
+            _ytDlpMessageColor = color;
+        });
+    }
+
     // Key names come from ConsoleKey.ToString(), so the up arrow arrives as "UpArrow". The DOM
     // spellings are accepted too, in case the event is ever synthesised from a browser-style source.
+    // Every branch here goes through Update, and that is what makes it work rather than just what
+    // makes it consistent. TextInput keeps its own copy of the text and only re-reads the Value
+    // parameter when it is handed a render; assigning _url without marking the component dirty
+    // left the box showing the old text forever, because the repaint that would have delivered
+    // the new value never happened.
     private void HandleKeyDown(KeyboardEventArgs e)
     {
         switch (e.Key)
         {
             case "Escape":
-                _url = "";
-                _formMessage = "";
-                _historyIndex = -1;
-                _draft = "";
+                Update(() =>
+                {
+                    _url = "";
+                    _formMessage = "";
+                    _historyIndex = -1;
+                    _draft = "";
+                    _wholePlaylist = false;
+                });
                 break;
 
             case "UpArrow" or "ArrowUp":
@@ -507,10 +618,13 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         if (value == _url)
             return;
 
-        _url = value;
+        Update(() =>
+        {
+            _url = value;
 
-        // An edit ends history browsing, so the next up arrow starts again from the newest entry.
-        _historyIndex = -1;
+            // An edit ends history browsing, so the next up arrow starts again from the newest entry.
+            _historyIndex = -1;
+        });
     }
 
     private void RecallOlder()
@@ -527,7 +641,7 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         if (_historyIndex == 0)
             return;
 
-        _url = _history[--_historyIndex];
+        Update(() => _url = _history[--_historyIndex]);
     }
 
     private void RecallNewer()
@@ -540,11 +654,11 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         if (_historyIndex >= _history.Count)
         {
             _historyIndex = -1;
-            _url = _draft;
+            Update(() => _url = _draft);
             return;
         }
 
-        _url = _history[_historyIndex];
+        Update(() => _url = _history[_historyIndex]);
     }
 
     private void Remember(string url)
@@ -558,20 +672,6 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
 
         _historyIndex = -1;
         _draft = "";
-
-        _ = SaveConfigAsync();
-    }
-
-    private void RememberDownload(DownloadItem item)
-    {
-        if (string.IsNullOrEmpty(item.FileName))
-            return;
-
-        var recent = Config.Config.RecentDownloads;
-        recent.Add(new RecentDownload { FileName = item.FileName, Folder = item.Folder });
-
-        while (recent.Count > MaxFinished)
-            recent.RemoveAt(0);
 
         _ = SaveConfigAsync();
     }
@@ -598,6 +698,15 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             return;
         }
 
+        // The other half of the guard in UpdateYtDlpAsync. That one refuses to replace the binary
+        // while downloads are running; this one refuses to start one while it is being replaced,
+        // which would otherwise launch a yt-dlp that is mid-swap.
+        if (_ytDlpUpdating)
+        {
+            Update(() => _formMessage = "yt-dlp is updating. Try again in a moment.");
+            return;
+        }
+
         // Pressing Enter twice is easy now that the box keeps its text, and starting the same
         // download a second time would have both runs fighting over one partial file.
         if (_downloads.Any(d => d.IsActive && d.Url == url))
@@ -621,9 +730,18 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         {
             _downloads.Add(item);
 
-            // The URL deliberately stays in the box. If the automatic retries are exhausted,
-            // pressing Enter again is the manual retry; CommitAsync clears it on success.
+            // Emptied as soon as the download is accepted, so the box is ready for the next link
+            // rather than something to clear by hand first. The URL is not lost: Remember below
+            // puts it at the top of the history, so the up arrow brings it straight back if the
+            // download fails and needs another go.
+            _url = "";
             _formMessage = "";
+            _historyIndex = -1;
+            _draft = "";
+
+            // Reset with the URL that justified it. The toggle only appears for a playlist link,
+            // so leaving it set would carry an invisible choice onto the next one.
+            _wholePlaylist = false;
         });
 
         Remember(url);
@@ -798,18 +916,6 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             item.Message = item.Status == DownloadStatus.Cancelled ? "" : result.Message;
             item.Percent = result.Success ? 100 : item.Percent;
 
-            if (item.Status == DownloadStatus.Complete)
-                RememberDownload(item);
-
-            // Clear the box only on success, and only if it still holds this download's URL —
-            // if it failed, that text is what the user needs to retry by hand, and if they have
-            // already typed something else, it is not ours to discard.
-            if (result.Success && string.Equals(_url.Trim(), item.Url, StringComparison.Ordinal))
-            {
-                _url = "";
-                _historyIndex = -1;
-            }
-
             TrimFinished();
         });
     }
@@ -937,20 +1043,6 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             if (sequence == _folderMessageSeq)
                 _folderMessage = "";
         });
-    }
-
-    private void Quit()
-    {
-        // Cancelled inline rather than through Cancel(), which defers the kill to a background
-        // thread: on the way out the processes have to be dead before the app stops, or yt-dlp
-        // and ffmpeg are orphaned and keep writing to the download folder.
-        foreach (var item in _downloads.Where(d => d.IsActive))
-        {
-            try { item.Cts.Cancel(); }
-            catch { /* already disposed, or a callback threw */ }
-        }
-
-        AppLifetime.StopApplication();
     }
 
     public void Dispose()

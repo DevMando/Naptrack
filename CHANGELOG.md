@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.4 (2026-08-18)
+
+### Fixes
+- Downloads that failed with "Access denied" or what looked like being blocked, most visibly on YouTube. yt-dlp was downloaded once on first run and then never touched again, so every install eventually drifted far enough behind the sites it talks to that extraction still succeeded but the media request came back `HTTP Error 403`. Nothing inside the app could fix it. yt-dlp is now kept current.
+- yt-dlp now comes from the nightly channel rather than stable. Sites change what they accept on no schedule and stable ships every few weeks; every gap between the two was a window where downloads failed for reasons no amount of retrying could clear.
+- A failed or interrupted yt-dlp download no longer leaves a truncated binary where the working one was. The new copy is staged to a temporary file and moved into place only once it has fully arrived.
+- The error shown for a blocked request now points at the update button instead of implying the site made a permission decision. A sign-in check is no longer retried, because retrying it never worked.
+
+### Interface
+- The downloads list now starts empty each session. Completed downloads were being written to `config.json` and restored on the next launch, so the list kept showing files from previous sessions with no way to clear it.
+- Naptrack clears the terminal on launch, so the previous commands are not left sitting behind and above the UI.
+- Fixed a "Setup Failed — yt-dlp could not be downloaded automatically" message appearing straight after an update that had in fact succeeded. Re-checking the dependencies cleared the installed flags before re-probing, and the probes take long enough that the UI repainted several times against that empty state.
+- The URL box now empties as soon as a download starts, ready for the next link. It used to hold the text until the download succeeded. The link still goes to the top of the history, so **↑** brings it straight back if it needs another go.
+- Esc, **↑** and **↓** had no effect on the URL box. All three changed the value behind the scenes but never asked for a repaint, and the input only re-reads its value when it is handed one — so the box kept showing the old text no matter what you pressed.
+- The controls between the URL box and the downloads list are no longer centred one cluster at a time. Format, playlist, folder and yt-dlp now share a single left-aligned label column, with the download choices and the folder/tooling rows separated into two groups.
+- The playlist choice resets when the box is cleared, instead of silently carrying over to the next playlist link.
+- Removed the **[ Quit ]** button; Ctrl+C quits. It sat next to **[ Change ]**, which put an exit one keystroke away from a settings control.
+
+### Features
+- Naptrack checks for a newer yt-dlp at most once a day, and updates it in the background during startup. Offline, rate limited, or already current, it stays silent.
+- The yt-dlp version is shown in the app, and turns yellow once the build is more than two weeks old. There is an `[ Update yt-dlp ]` button next to it that fetches the newest build on demand, ignoring the daily check.
+- A yt-dlp already installed on your system is used as before and left alone — except when it has gone stale, in which case Naptrack installs its own up-to-date copy rather than leaving you with downloads that cannot work.
+- YouTube's player challenges are JavaScript, and yt-dlp now warns that extracting without an engine to run them is deprecated and drops some formats. Naptrack detects Node or Bun on your system and points yt-dlp at it. Deno is found by yt-dlp on its own.
+
 ## 1.0.3 (2026-08-14)
 
 ### Features

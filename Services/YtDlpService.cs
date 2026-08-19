@@ -90,10 +90,17 @@ public partial class YtDlpService
             // can spring, so downloading a playlist has to be something the user opted into.
             var playlistArgs = wholePlaylist ? "--yes-playlist " : "--no-playlist ";
 
+            // YouTube's player challenges are JavaScript, and yt-dlp now warns that extracting
+            // without an engine to run them is deprecated and drops formats. It looks for deno on
+            // its own; node and bun have to be named. Only passed when the probe confirmed this
+            // build understands the flag -- an unknown option is a hard failure, not a warning.
+            var jsRuntimeArgs = _depChecker is { SupportsJsRuntimes: true, JsRuntime: { } runtime }
+                ? $"--js-runtimes {runtime} " : "";
+
             var psi = new ProcessStartInfo
             {
                 FileName = ytDlpPath,
-                Arguments = $"{ffmpegArgs}{playlistArgs}{formatArgs} -o \"%(title)s.%(ext)s\" --newline --progress \"{url}\"",
+                Arguments = $"{ffmpegArgs}{jsRuntimeArgs}{playlistArgs}{formatArgs} -o \"%(title)s.%(ext)s\" --newline --progress \"{url}\"",
                 WorkingDirectory = outputDir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -260,10 +267,23 @@ public partial class YtDlpService
         if (stderr.Contains("HTTP Error 429") || stderr.Contains("Too Many Requests"))
             return ("Rate limited by the site.", true);
 
-        // A 403 on a media request is usually an expired or rejected URL signature rather than a
+        // The bot check names itself, and no amount of retrying clears it: the request needs to
+        // carry a signed-in session, which yt-dlp can lift from a browser profile.
+        if (stderr.Contains("Sign in to confirm you’re not a bot")
+            || stderr.Contains("Sign in to confirm you're not a bot")
+            || stderr.Contains("confirm you are not a bot"))
+        {
+            return ("The site asked for a sign-in check. Update yt-dlp below, or try again later.", false);
+        }
+
+        // A 403 on a media request is an expired or rejected URL signature far more often than a
         // real permission decision, and yt-dlp resumes the partial file on the next attempt.
+        //
+        // It is also exactly how an out-of-date yt-dlp fails: extraction succeeds, formats are
+        // listed, and only the transfer is refused. The message names that, because the retries
+        // will not fix it and the update almost always does.
         if (stderr.Contains("HTTP Error 403") || stderr.Contains("Forbidden"))
-            return ("Access denied. The site blocked the request.", true);
+            return ("Access denied. If this keeps happening, update yt-dlp below.", true);
 
         if (stderr.Contains("HTTP Error 5") || stderr.Contains("Internal Server Error")
             || stderr.Contains("Bad Gateway") || stderr.Contains("Service Unavailable"))

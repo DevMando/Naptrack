@@ -22,8 +22,11 @@ public sealed class DownloadItem
     /// <summary>File yt-dlp is writing, once it announces a destination. Empty until then.</summary>
     public string FileName { get; set; } = "";
 
-    /// <summary>Folder the file landed in, captured at completion.</summary>
-    public string Folder { get; set; } = "";
+    /// <summary>
+    /// Folder yt-dlp writes into, captured at submission. Not read at completion: the folder can
+    /// be changed while a download runs, and the file still lands where the run started.
+    /// </summary>
+    public required string Folder { get; init; }
 
     /// <summary>Failure detail, or the "already downloaded" notice. Carries no status glyph.</summary>
     public string Message { get; set; } = "";
@@ -49,6 +52,12 @@ public sealed class DownloadItem
     /// source is safe to dispose.
     /// </summary>
     public bool Settled { get; set; }
+
+    /// <summary>
+    /// True once the user has cancelled, from the moment they press the button. The status flips
+    /// immediately but the token is tripped from a background thread, so either can be first.
+    /// </summary>
+    public bool IsCancelled => Status == DownloadStatus.Cancelled || Cts.IsCancellationRequested;
 
     public bool IsActive =>
         Status is DownloadStatus.Queued or DownloadStatus.Downloading

@@ -16,12 +16,17 @@ public class FolderPickerService
                 psi = new ProcessStartInfo
                 {
                     FileName = "powershell.exe",
-                    Arguments = "-NoProfile -Command \"Add-Type -AssemblyName System.Windows.Forms; " +
+                    // Output is forced to UTF-8 on both ends. Left alone, PowerShell writes the
+                    // path in the OEM code page, and a folder such as "Música" came back garbled --
+                    // and was then created, under the garbled name, as the download folder.
+                    Arguments = "-NoProfile -Command \"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
+                                "Add-Type -AssemblyName System.Windows.Forms; " +
                                 "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; " +
                                 "$dialog.Description = 'Select download folder'; " +
                                 "$dialog.ShowNewFolderButton = $true; " +
                                 "if ($dialog.ShowDialog() -eq 'OK') { $dialog.SelectedPath } else { '' }\"",
                     RedirectStandardOutput = true,
+                    StandardOutputEncoding = System.Text.Encoding.UTF8,
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };

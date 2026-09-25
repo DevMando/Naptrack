@@ -61,10 +61,32 @@ public class ConfigService
         }
     }
 
+    /// <summary>
+    /// Serialises saves. Startup alone saves from the update check and the yt-dlp check at the
+    /// same moment, and on Windows the second writer was refused the open file: its save was
+    /// swallowed, and whichever snapshot happened to win was what the next launch read.
+    /// </summary>
+    private readonly SemaphoreSlim _saveLock = new(1, 1);
+
     public async Task SaveAsync()
     {
-        Directory.CreateDirectory(ConfigDir);
-        var json = JsonSerializer.Serialize(Config, AppConfigContext.Default.AppConfig);
-        await File.WriteAllTextAsync(ConfigPath, json);
+        await _saveLock.WaitAsync();
+
+        try
+        {
+            Directory.CreateDirectory(ConfigDir);
+            var json = JsonSerializer.Serialize(Config, AppConfigContext.Default.AppConfig);
+
+            // Written beside the real file and moved over it, so a crash mid-write leaves the
+            // previous config intact rather than a truncated one that loads as defaults and
+            // silently resets the download folder.
+            var staging = ConfigPath + ".tmp";
+            await File.WriteAllTextAsync(staging, json);
+            File.Move(staging, ConfigPath, overwrite: true);
+        }
+        finally
+        {
+            _saveLock.Release();
+        }
     }
 }

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using Naptrack.Models;
 
@@ -22,7 +23,10 @@ public partial class YtDlpService
     // Size, speed and ETA are matched separately rather than as one alternation-heavy pattern:
     // extractors omit fields and print a literal "Unknown" for others, and independent patterns
     // degrade one field at a time instead of dropping the whole line.
-    [GeneratedRegex(@"(\d+(?:\.\d+)?)%")]
+    // Anchored to the start of a [download] line. Unanchored, a percent sign anywhere in the
+    // output matched -- including one in a title, so "[ExtractAudio] Destination: 100% Hits.mp3"
+    // read as a progress tick and swallowed the Converting status.
+    [GeneratedRegex(@"^\[download\]\s+(\d+(?:\.\d+)?)%")]
     private static partial Regex ProgressRegex();
 
     [GeneratedRegex(@"of\s+~?\s*([\d.]+\s*[KMGT]?i?B)\b", RegexOptions.IgnoreCase)]
@@ -75,38 +79,91 @@ public partial class YtDlpService
             // onComplete, not as an exception the caller has no way to observe.
             Directory.CreateDirectory(outputDir);
 
-            var ytDlpPath = _depChecker.YtDlpPath;
+            var psi = new ProcessStartInfo
+            {
+                FileName = _depChecker.YtDlpPath,
+                WorkingDirectory = outputDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+
+                // yt-dlp encodes what it prints with the locale's code page when stdout is a pipe,
+                // which on Windows turns a Japanese or accented title into question marks before
+                // it ever reaches the downloads list. Pinned to UTF-8 on both ends.
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8,
+            };
+
+            psi.Environment["PYTHONIOENCODING"] = "utf-8";
+
+            // Every argument goes through ArgumentList, which quotes each one. The URL is text the
+            // user pasted, and spliced into a single command line a link containing a quote could
+            // close it and smuggle in options of its own -- --exec among them.
+            var args = psi.ArgumentList;
+
             var ffmpegDir = Path.GetDirectoryName(_depChecker.FfmpegPath);
-            var ffmpegArgs = !string.IsNullOrEmpty(ffmpegDir) && ffmpegDir != "."
-                ? $"--ffmpeg-location \"{ffmpegDir}\" " : "";
-
-            var formatArgs = format == DownloadFormat.Mp3
-                ? "-x --audio-format mp3 --audio-quality 0"
-                : "-f \"bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]\" --merge-output-format mp4";
-
-            // Always explicit. Left to itself yt-dlp expands any URL carrying a "list=" parameter
-            // into the whole playlist, which is most links copied from YouTube while a playlist is
-            // open: asking for one track and getting two hundred is the worst surprise this app
-            // can spring, so downloading a playlist has to be something the user opted into.
-            var playlistArgs = wholePlaylist ? "--yes-playlist " : "--no-playlist ";
+            if (!string.IsNullOrEmpty(ffmpegDir) && ffmpegDir != ".")
+            {
+                args.Add("--ffmpeg-location");
+                args.Add(ffmpegDir);
+            }
 
             // YouTube's player challenges are JavaScript, and yt-dlp now warns that extracting
             // without an engine to run them is deprecated and drops formats. It looks for deno on
             // its own; node and bun have to be named. Only passed when the probe confirmed this
             // build understands the flag -- an unknown option is a hard failure, not a warning.
-            var jsRuntimeArgs = _depChecker is { SupportsJsRuntimes: true, JsRuntime: { } runtime }
-                ? $"--js-runtimes {runtime} " : "";
-
-            var psi = new ProcessStartInfo
+            if (_depChecker is { SupportsJsRuntimes: true, JsRuntime: { } runtime })
             {
-                FileName = ytDlpPath,
-                Arguments = $"{ffmpegArgs}{jsRuntimeArgs}{playlistArgs}{formatArgs} -o \"%(title)s.%(ext)s\" --newline --progress \"{url}\"",
-                WorkingDirectory = outputDir,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+                args.Add("--js-runtimes");
+                args.Add(runtime);
+            }
+
+            // Always explicit. Left to itself yt-dlp expands any URL carrying a "list=" parameter
+            // into the whole playlist, which is most links copied from YouTube while a playlist is
+            // open: asking for one track and getting two hundred is the worst surprise this app
+            // can spring, so downloading a playlist has to be something the user opted into.
+            if (wholePlaylist)
+            {
+                args.Add("--yes-playlist");
+            }
+            else
+            {
+                // --no-playlist only chooses the video when a URL names both a video and a
+                // playlist. A link to a playlist alone ignores it and downloads everything, so
+                // the item limit is what actually holds "one video" to one video.
+                args.Add("--no-playlist");
+                args.Add("--playlist-items");
+                args.Add("1");
+            }
+
+            if (format == DownloadFormat.Mp3)
+            {
+                args.Add("-x");
+                args.Add("--audio-format");
+                args.Add("mp3");
+                args.Add("--audio-quality");
+                args.Add("0");
+            }
+            else
+            {
+                // MP4 streams first, since they merge without re-encoding. The trailing
+                // fallbacks are for sites that publish no MP4 at all, which otherwise failed
+                // outright with "Requested format is not available".
+                args.Add("-f");
+                args.Add("bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/bestvideo*+bestaudio/best");
+                args.Add("--merge-output-format");
+                args.Add("mp4");
+            }
+
+            args.Add("-o");
+            args.Add("%(title)s.%(ext)s");
+            args.Add("--newline");
+            args.Add("--progress");
+
+            // Ends option parsing, so nothing in the URL can ever be read as a flag.
+            args.Add("--");
+            args.Add(url);
 
             process = Process.Start(psi);
             if (process is null)
@@ -248,6 +305,22 @@ public partial class YtDlpService
         if (string.IsNullOrWhiteSpace(stderr))
             return ("Download failed unexpectedly.", false);
 
+        var errorLines = stderr
+            .Split('\n')
+            .Where(l => l.Contains("ERROR:"))
+            .ToArray();
+
+        // Classified on the ERROR lines when there are any. stderr also carries warnings, and a
+        // playlist routinely warns about hidden "Private video" or "Video unavailable" entries:
+        // matched against everything, a run that really died of a 429 was reported as an
+        // unavailable video and never retried.
+        var text = errorLines.Length > 0 ? string.Join('\n', errorLines) : stderr;
+
+        return Classify(text) ?? Fallback(stderr, errorLines);
+    }
+
+    private static (string Message, bool Retryable)? Classify(string stderr)
+    {
         if (stderr.Contains("Unsupported URL"))
             return ("This URL is not supported. Try a YouTube, TikTok, Instagram, or Facebook link.", false);
 
@@ -302,12 +375,13 @@ public partial class YtDlpService
         if (stderr.Contains("already been downloaded"))
             return ("File already exists in your download folder.", false);
 
-        // Fall back to the actual error line from yt-dlp
-        var errorLine = stderr
-            .Split('\n')
-            .LastOrDefault(l => l.Contains("ERROR:"))
-            ?.Replace("ERROR:", "")
-            .Trim();
+        return null;
+    }
+
+    // Falls back to the actual error line from yt-dlp.
+    private static (string Message, bool Retryable) Fallback(string stderr, string[] errorLines)
+    {
+        var errorLine = errorLines.LastOrDefault()?.Replace("ERROR:", "").Trim();
 
         return (!string.IsNullOrEmpty(errorLine)
             ? errorLine

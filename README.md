@@ -19,7 +19,7 @@
 
 Grab audio and video from the web. Built originally to get lofi tracks offline for coding sessions.
 
-Paste a link, pick MP3 or MP4, hit Download. That's it.
+Paste a link, hit Download MP3 or Download MP4. That's it.
 
 <p align="center">
   <img src="assets/Naptrack.gif" alt="Naptrack Demo" width="700" />
@@ -30,7 +30,7 @@ Built with .NET 10 and [RazorConsole](https://github.com/AaronJMcilvaine/razorco
 ## Features
 
 - Download audio (MP3) or video (MP4) from YouTube, TikTok, Instagram, Facebook, and [1000+ sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md)
-- MP3/MP4 format toggle
+- One-press **Download MP3** / **Download MP4** buttons
 - Auto-downloads `yt-dlp` and `ffmpeg` on first run (no manual setup)
 - Keeps `yt-dlp` up to date automatically, so sites do not start refusing downloads as it ages
 - Native folder picker to change download location
@@ -77,17 +77,23 @@ The output is a single executable in `bin/Release/net10.0/<runtime>/publish/`.
 
 1. Launch `naptrack`
 2. Paste a URL (YouTube, TikTok, Instagram, Facebook, etc.)
-3. Select **MP3** or **MP4**
-4. Press **Enter** or Tab to **[ Download ]** and press Enter
-5. File downloads to your configured folder
+3. Tab to **[ Download MP4 ]** or **[ Download MP3 ]** and press Enter — or press **Enter** in the
+   URL box to repeat the format you used last
+4. File downloads to your configured folder
 
 ## Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
-| **Tab** | Navigate between elements |
-| **Enter** | Select / confirm |
-| **Esc** | Clear input and errors |
+| **Tab** | Move between the URL box and the download buttons |
+| **Shift+Tab** | Switch to the settings (**[ Change ]**, **[ Open ]**, **[ Update ]**) and back |
+| **Enter** | Download / press the focused button |
+| **↑ / ↓** | Recall recent links |
+| **Esc** | Clear the URL box, or leave the settings |
+| **Ctrl+E** | Open the download folder |
+| **Ctrl+L** | Change the download folder |
+| **Ctrl+U** | Update yt-dlp |
+| **Ctrl+P** | Toggle "this video only" / "whole playlist" for a playlist link |
 | **Ctrl+V** | Paste (Windows) |
 | **Cmd+V** | Paste (macOS) |
 | **Ctrl+Shift+V** | Paste (Linux) |
@@ -95,7 +101,8 @@ The output is a single executable in `bin/Release/net10.0/<runtime>/publish/`.
 
 ## Configuration
 
-- **Download folder**: Click the folder path or use **[ Change ]** to open a folder picker
+- **Download folder**: press **Shift+Tab**, then **[ Change ]** to pick a folder or **[ Open ]** to view it
+  (or **Ctrl+L** / **Ctrl+E** from anywhere)
 - The URL box empties as soon as a download is accepted, so it is ready for the next link. The
   link is not lost — press **↑** to bring it back from history if a download needs another go.
 - Settings are saved to:
@@ -124,7 +131,8 @@ newer build at most once a day, updating in the background while it starts. If y
 rate limited, or already current, nothing happens and nothing is said.
 
 The version in use is shown in the app. It turns yellow once the build is more than two weeks
-old, and **[ Update yt-dlp ]** next to it fetches the newest build immediately. That button is
+old, and **[ Update ]** next to it (**Shift+Tab** to reach it, or **Ctrl+U**) fetches the newest
+build immediately. That button is
 what the "Access denied" message is pointing you at.
 
 If you already have yt-dlp installed through pip, Homebrew or a package manager, Naptrack uses it

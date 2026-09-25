@@ -200,9 +200,17 @@ public class BinaryDownloader
         const string url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip";
         var zipPath = Path.Combine(BinDir, "ffmpeg.zip");
 
-        await DownloadFileAsync(url, zipPath, ct);
-        ExtractFfmpegBinFolderFromZip(zipPath);
-        File.Delete(zipPath);
+        // Deleted in a finally: a failed download or extraction otherwise left a partial archive
+        // of a hundred-odd megabytes in the bin folder for good.
+        try
+        {
+            await DownloadFileAsync(url, zipPath, ct);
+            ExtractFfmpegBinFolderFromZip(zipPath);
+        }
+        finally
+        {
+            TryDelete(zipPath);
+        }
     }
 
     private async Task DownloadFfmpegLinuxAsync(CancellationToken ct)
@@ -211,9 +219,15 @@ public class BinaryDownloader
         var url = $"https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-{arch}-gpl.tar.xz";
         var archivePath = Path.Combine(BinDir, "ffmpeg.tar.xz");
 
-        await DownloadFileAsync(url, archivePath, ct);
-        await ExtractFfmpegFromTarXzAsync(archivePath);
-        File.Delete(archivePath);
+        try
+        {
+            await DownloadFileAsync(url, archivePath, ct);
+            await ExtractFfmpegFromTarXzAsync(archivePath, ct);
+        }
+        finally
+        {
+            TryDelete(archivePath);
+        }
     }
 
     private async Task DownloadFfmpegMacAsync(CancellationToken ct)
@@ -225,7 +239,20 @@ public class BinaryDownloader
             const string armUrl =
                 "https://github.com/eugeneware/ffmpeg-static/releases/latest/download/ffmpeg-darwin-arm64";
 
-            await DownloadFileAsync(armUrl, FfmpegPath, ct);
+            // Staged for the same reason as yt-dlp: a download cut short must not leave a
+            // truncated binary where ffmpeg is expected.
+            var staging = FfmpegPath + ".download";
+
+            try
+            {
+                await DownloadFileAsync(armUrl, staging, ct);
+                File.Move(staging, FfmpegPath, overwrite: true);
+            }
+            finally
+            {
+                TryDelete(staging);
+            }
+
             MakeExecutable(FfmpegPath);
             return;
         }
@@ -233,9 +260,15 @@ public class BinaryDownloader
         const string url = "https://evermeet.cx/ffmpeg/get/zip";
         var zipPath = Path.Combine(BinDir, "ffmpeg.zip");
 
-        await DownloadFileAsync(url, zipPath, ct);
-        ExtractFfmpegFromZip(zipPath, "ffmpeg");
-        File.Delete(zipPath);
+        try
+        {
+            await DownloadFileAsync(url, zipPath, ct);
+            ExtractFfmpegFromZip(zipPath, "ffmpeg");
+        }
+        finally
+        {
+            TryDelete(zipPath);
+        }
     }
 
     private async Task DownloadFileAsync(string url, string destPath, CancellationToken ct)
@@ -294,40 +327,59 @@ public class BinaryDownloader
         MakeExecutable(FfmpegPath);
     }
 
-    private async Task ExtractFfmpegFromTarXzAsync(string archivePath)
+    private static readonly TimeSpan TarTimeout = TimeSpan.FromMinutes(5);
+
+    private async Task ExtractFfmpegFromTarXzAsync(string archivePath, CancellationToken ct)
     {
-        // Use tar command to extract just the ffmpeg binary
+        // Extract just the ffmpeg binary.
+        var ok = await RunTarAsync(
+            ["xf", archivePath, "--wildcards", "--no-anchored", "ffmpeg", "--strip-components=2", "-C", BinDir], ct);
+
+        // Some tar versions do not support --wildcards; fall back to extracting everything.
+        if (!ok)
+            await RunTarAsync(["xf", archivePath, "-C", BinDir, "--strip-components=2"], ct);
+
+        MakeExecutable(FfmpegPath);
+    }
+
+    /// <summary>
+    /// Runs tar and reports whether it exited cleanly. stderr is drained rather than just
+    /// redirected -- a full pipe blocks tar mid-write, and with no timeout the setup spinner then
+    /// ran forever -- and a run that outlives <see cref="TarTimeout"/> is killed.
+    /// </summary>
+    private static async Task<bool> RunTarAsync(string[] arguments, CancellationToken ct)
+    {
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "tar",
-            Arguments = $"xf \"{archivePath}\" --wildcards --no-anchored \"ffmpeg\" --strip-components=2 -C \"{BinDir}\"",
             UseShellExecute = false,
             RedirectStandardError = true,
             CreateNoWindow = true
         };
 
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument);
+
         using var process = System.Diagnostics.Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start tar.");
-        await process.WaitForExitAsync();
 
-        if (process.ExitCode != 0)
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TarTimeout);
+
+        try
         {
-            // Try without --wildcards (some tar versions don't support it)
-            var psi2 = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = "tar",
-                Arguments = $"xf \"{archivePath}\" -C \"{BinDir}\" --strip-components=2",
-                UseShellExecute = false,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-
-            using var process2 = System.Diagnostics.Process.Start(psi2)
-                ?? throw new InvalidOperationException("Failed to start tar.");
-            await process2.WaitForExitAsync();
+            await process.StandardError.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);
+            return process.ExitCode == 0;
         }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); }
+            catch { /* already exited */ }
 
-        MakeExecutable(FfmpegPath);
+            ct.ThrowIfCancellationRequested();
+            return false;
+        }
     }
 
     private static void MakeExecutable(string path)

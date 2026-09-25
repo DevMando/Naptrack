@@ -12,17 +12,28 @@
 @inject BinaryDownloader Downloader
 @inject YtDlpService YtDlp
 @inject FolderPickerService FolderPicker
+@inject TextInputBufferSync InputBuffer
+@inject InputLoopScheduler InputLoop
+@inject RazorConsole.Core.Focus.FocusManager Focus
 
+@* The version sits against the banner's last line, like a signature, rather than on a row of its
+   own. Blank lines above it do the bottom-alignment, since Columns tops its cells. *@
 <Align Horizontal="HorizontalAlignment.Center">
-    <Rows>
-        @foreach (var line in _bannerLines)
-        {
-            <Markup Content="@line" Foreground="Theme.Accent" />
-        }
-    </Rows>
-</Align>
-<Align Horizontal="HorizontalAlignment.Right">
-    <Markup Content="@($"v{UpdateChecker.CurrentVersion}")" Foreground="Theme.Muted" />
+    <Columns>
+        <Rows>
+            @foreach (var line in _bannerLines)
+            {
+                <Markup Content="@line" Foreground="Theme.Accent" />
+            }
+        </Rows>
+        <Rows>
+            @for (var i = 1; i < _bannerLines.Length; i++)
+            {
+                <Markup Content=" " />
+            }
+            <Markup Content="@($"v{UpdateChecker.CurrentVersion}")" Foreground="Theme.Muted" />
+        </Rows>
+    </Columns>
 </Align>
 @if (Updater.UpdateAvailable)
 {
@@ -63,7 +74,7 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
 
 <TextInput Value="@_url"
            ValueChanged="@((v) => OnUrlChanged(v))"
-           OnSubmit="@((v) => StartDownload())"
+           OnSubmit="@((v) => StartDownload(_format))"
            @onkeydown="HandleKeyDown"
            Label="Paste URL (↑ for history, Esc to clear)"
            LabelColor="Theme.Accent"
@@ -73,29 +84,38 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
            BorderColor="Theme.Muted"
            FocusedBorderColor="Theme.Accent"
            Expand="true"
+           Disabled="@_settingsMode"
            FocusOrder="1" />
 
 @* Controls sit left, under the URL box, sharing one label column. Centring each cluster
    independently produced three different centre points beneath a full-width input, so no two
    rows shared an edge and the whole group read as clutter rather than as a set of choices. *@
 
-@* Selection is carried by the marker, not by colour: the background is what shows focus, so
-   encoding both in colour made a focused-but-unselected option look active. *@
-<Columns>
-    <Markup Content="@Field("Format")" Foreground="Theme.Muted" />
-    <TextButton Content="@(_format == DownloadFormat.Mp3 ? "● MP3" : "○ MP3")"
-                OnClick="() => SetFormat(DownloadFormat.Mp3)"
-                BackgroundColor="Theme.Surface"
-                FocusedColor="Theme.Focus" />
-    <TextButton Content="@(_format == DownloadFormat.Mp4 ? "● MP4" : "○ MP4")"
-                OnClick="() => SetFormat(DownloadFormat.Mp4)"
-                BackgroundColor="Theme.Surface"
-                FocusedColor="Theme.Focus" />
-    <TextButton Content="[ Download ]"
-                OnClick="StartDownload"
-                BackgroundColor="Theme.Surface"
-                FocusedColor="Theme.Focus" />
-</Columns>
+@* One button per format, directly under the box, so choosing the format and starting the download
+   are the same press. Tab walks URL box -> MP4 -> MP3 (and a running download's Cancel); Enter in
+   the box repeats whichever format was used last.
+
+   The remaining controls are labels driven by shortcuts, shown beside each. Those need the
+   keyboard-loop hook (InputLoopScheduler); should it ever fail to take, Keyed stays false and they
+   fall back to focusable buttons, so none of them can become unreachable. *@
+@* Folder and yt-dlp float right of the buttons when the terminal is wide enough for both, and
+   drop below as their own group when it is not: squeezed into 80 columns side by side, Spectre
+   wraps every cell and the row turns into a tangle. *@
+@{ var sideBySide = ConsoleWidth() >= SideBySideWidth; }
+
+@if (sideBySide)
+{
+    <Grid Columns="2" Expand="true">
+        @DownloadButtons
+        <Align Horizontal="HorizontalAlignment.Right">
+            @SettingsRows(true)
+        </Align>
+    </Grid>
+}
+else
+{
+    @DownloadButtons
+}
 
 @* Shown only for a link that carries a playlist, so the choice appears exactly when it matters
    and never becomes hidden state that silently changes what the next download does. *@
@@ -103,14 +123,23 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
 {
     <Columns>
         <Markup Content="@Field("Playlist")" Foreground="Theme.Warn" />
-        <TextButton Content="@(_wholePlaylist ? "○ This video only" : "● This video only")"
-                    OnClick="() => _wholePlaylist = false"
-                    BackgroundColor="Theme.Surface"
-                    FocusedColor="Theme.Focus" />
-        <TextButton Content="@(_wholePlaylist ? "● Whole playlist" : "○ Whole playlist")"
-                    OnClick="() => _wholePlaylist = true"
-                    BackgroundColor="Theme.Surface"
-                    FocusedColor="Theme.Focus" />
+        @if (Keyed)
+        {
+            <Markup Content="@Option(SingleItemLabel(_url), !_wholePlaylist)" Foreground="@OptionColor(!_wholePlaylist)" />
+            <Markup Content="@Option("Whole playlist", _wholePlaylist)" Foreground="@OptionColor(_wholePlaylist)" />
+            <Markup Content="Ctrl+P" Foreground="Theme.Muted" />
+        }
+        else
+        {
+            <TextButton Content="@Option(SingleItemLabel(_url), !_wholePlaylist)"
+                        OnClick="() => _wholePlaylist = false"
+                        BackgroundColor="Theme.Surface"
+                        FocusedColor="Theme.Focus" />
+            <TextButton Content="@Option("Whole playlist", _wholePlaylist)"
+                        OnClick="() => _wholePlaylist = true"
+                        BackgroundColor="Theme.Surface"
+                        FocusedColor="Theme.Focus" />
+        }
     </Columns>
 }
 
@@ -118,45 +147,17 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
    shifts the rows below it out from under the cursor. *@
 <Markup Content="@_formMessage" Foreground="Theme.Error" />
 
-@* Where files go and what is doing the work: a different question from what to download, so it
-   gets its own group rather than another identically-spaced row. *@
-<Newline />
-
-<Columns>
-    <Markup Content="@Field("Folder")" Foreground="Theme.Muted" />
-    <TextButton Content="@Shorten(Config.Config.DownloadFolder)"
-                OnClick="OpenDownloadFolder"
-                BackgroundColor="Theme.Surface"
-                FocusedColor="Theme.Focus" />
-    <TextButton Content="[ Change ]"
-                OnClick="ChangeFolder"
-                BackgroundColor="Theme.Surface"
-                FocusedColor="Theme.Focus" />
-</Columns>
+@if (!sideBySide)
+{
+    @* Where files go and what is doing the work: a different question from what to download, so
+       it gets its own group rather than another identically-spaced row. *@
+    <Newline />
+    @SettingsRows(false)
+}
 
 @if (!string.IsNullOrEmpty(_folderMessage))
 {
     <Markup Content="@_folderMessage" Foreground="@_folderMessageColor" />
-}
-
-@* The downloader's own version, surfaced deliberately. When a site starts refusing downloads
-   this is the first thing that matters, and before it was on screen there was no way to tell a
-   genuinely unavailable video from a yt-dlp that had simply gone stale. *@
-@if (_depsChecked && DepChecker.IsYtDlpInstalled)
-{
-    <Columns>
-        <Markup Content="@Field("yt-dlp")" Foreground="Theme.Muted" />
-        <Markup Content="@YtDlpStatusText" Foreground="@YtDlpStatusColor" />
-        <TextButton Content="@(_ytDlpUpdating ? "[ Updating... ]" : "[ Update ]")"
-                    OnClick="UpdateYtDlpAsync"
-                    BackgroundColor="Theme.Surface"
-                    FocusedColor="Theme.Focus" />
-    </Columns>
-}
-
-@if (!string.IsNullOrEmpty(_ytDlpMessage))
-{
-    <Markup Content="@_ytDlpMessage" Foreground="@_ytDlpMessageColor" />
 }
 
 @if (_downloads.Count > 0)
@@ -179,10 +180,22 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
                 <Columns>
                     @if (item.IsActive)
                     {
-                        @* Spinner rather than a static bar: during conversion yt-dlp reports no
+                        @* One cell per colour, since RazorConsole escapes text and inline colour
+                           tags are not an option: the spinner and bar carry the state, the title
+                           stays plain white as the thing being read, the percentage is bold, and
+                           speed and ETA recede into grey. Every cell is a fixed width, so the
+                           columns still line up from row to row.
+
+                           Spinner rather than a static bar: during conversion yt-dlp reports no
                            percentage for minutes at a time, and the animation is the only thing
                            distinguishing "working" from "hung". *@
-                        <Spinner Message="@ActiveLine(item, layout)" SpinnerType="@SpinnerFor(item)" />
+                        var cells = CellsFor(item, layout);
+
+                        <Spinner SpinnerType="Spectre.Console.Spinner.Known.Dots2" Style="@cells.SpinnerStyle" />
+                        <Markup Content="@Fit(LabelOf(item), layout.Label)" />
+                        <Markup Content="@cells.Progress" Foreground="@cells.ProgressColor" />
+                        <Markup Content="@cells.Value" Foreground="@cells.ValueColor" Decoration="@cells.ValueDecoration" />
+                        <Markup Content="@cells.Detail" Foreground="Theme.Muted" />
                         <TextButton Content="[ Cancel ]"
                                     OnClick="() => Cancel(item)"
                                     BackgroundColor="Theme.Surface"
@@ -198,7 +211,7 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
     </Panel>
 }
 
-<Markup Content="@_shortcuts" Foreground="Theme.Muted" />
+<Markup Content="@ShortcutsLine" Foreground="Theme.Muted" />
 
 @code {
     /// <summary>
@@ -227,14 +240,21 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         "╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝        ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝",
     ];
 
+    private static readonly string _pasteHint =
+        System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
+            ? "Ctrl+V: paste"
+        : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
+            ? "Cmd+V: paste"
+            : "Ctrl+Shift+V: paste";
+
     // Ctrl+C is listed because it is now the only way out: the Quit button is gone, and Esc
     // clears the URL box rather than exiting.
-    private static readonly string _shortcuts =
-        System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
-            ? "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Ctrl+V: paste  |  Ctrl+C: quit"
-        : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
-            ? "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Cmd+V: paste  |  Ctrl+C: quit"
-            : "Tab: navigate  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  Ctrl+Shift+V: paste  |  Ctrl+C: quit";
+    private string ShortcutsLine =>
+        _settingsMode
+            ? "Tab: move  |  Enter: select  |  Shift+Tab: downloads  |  Esc: back  |  Ctrl+C: quit"
+        : Keyed
+            ? $"Tab: move  |  Shift+Tab: settings  |  ↑↓: history  |  Esc: clear  |  {_pasteHint}  |  Ctrl+C: quit"
+            : $"Tab: move  |  Enter: select  |  ↑↓: history  |  Esc: clear  |  {_pasteHint}  |  Ctrl+C: quit";
 
     /// <summary>
     /// Parallel yt-dlp runs past this point mostly fight each other for bandwidth, and each one
@@ -255,13 +275,15 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
     private const int MaxHistory = 25;
 
     /// <summary>
-    /// Everything in an active row that is neither the label, the bar, nor the rate:
-    /// spinner(2) + two gaps(4) + percent(6) + space and "[ Cancel ]"(11) + border and padding(4).
+    /// Everything in an active row that is neither the label, the bar, nor the rate. Each cell
+    /// is followed by a one-column gap: spinner and its trailing space(2) + gap(1), label gap(1),
+    /// bar gap(1), percent(6) + gap(1), rate gap(1), "[ Cancel ]"(10) + gap(1), and the panel's
+    /// border and padding(4).
     /// </summary>
-    private const int RowChrome = 27;
+    private const int RowChrome = 28;
 
-    /// <summary>Worst-case width of "  850KiB/s · 01:02:03".</summary>
-    private const int RateWidth = 22;
+    /// <summary>Worst-case width of "850KiB/s · 01:02:03".</summary>
+    private const int RateWidth = 20;
 
     private const int MinLabel = 12;
     private const int MinBar = 8;
@@ -306,6 +328,9 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
     private volatile bool _dirty;
 
     private CancellationTokenSource? _pump;
+
+    /// <summary>When the last repaint happened, for throttling to <see cref="RenderInterval"/>.</summary>
+    private long _lastRender;
 
     private string _folderMessage = "";
     private Color _folderMessageColor = Theme.Muted;
@@ -363,6 +388,205 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
     /// </summary>
     private static string Field(string label) => "  " + label.PadRight(LabelWidth);
 
+    /// <summary>
+    /// Terminal width from which Folder and yt-dlp sit beside the download buttons: the buttons
+    /// take about 36 columns and the two lines up to about 60 with a long path or version.
+    /// </summary>
+    private const int SideBySideWidth = 100;
+
+    /// <summary>
+    /// One button per format, directly under the URL box. Dimmed labels in settings mode, so Tab
+    /// there reaches only the settings.
+    /// </summary>
+    private RenderFragment DownloadButtons => @<Columns>
+        <Markup Content=" " />
+        @if (_settingsMode)
+        {
+            <Markup Content="[ Download MP4 ]" Foreground="Theme.Muted" />
+            <Markup Content="[ Download MP3 ]" Foreground="Theme.Muted" />
+        }
+        else
+        {
+            <TextButton Content="[ Download MP4 ]"
+                        OnClick="() => StartDownload(DownloadFormat.Mp4)"
+                        BackgroundColor="Theme.Surface"
+                        FocusedColor="Theme.Focus" />
+            <TextButton Content="[ Download MP3 ]"
+                        OnClick="() => StartDownload(DownloadFormat.Mp3)"
+                        BackgroundColor="Theme.Surface"
+                        FocusedColor="Theme.Focus" />
+        }
+    </Columns>;
+
+    /// <summary>
+    /// The Folder and yt-dlp lines. Beside the buttons they drop the shared label column, which
+    /// only earns its width when these rows line up under the others on the left.
+    ///
+    /// Their buttons look the same in both modes but only take focus in settings mode. Swapping a
+    /// focusable control for a label is also what moves focus: when the focused element stops
+    /// being focusable, RazorConsole hands focus to the first one that still is, so entering the
+    /// mode lands on Change and leaving it lands back on the URL box, with no focus API needed.
+    /// </summary>
+    private RenderFragment SettingsRows(bool sideBySide) => @<Rows>
+        <Columns>
+            <Markup Content="@SettingLabel("Folder", sideBySide)" Foreground="Theme.Muted" />
+
+            @* The path is text, never a button: settings mode lands on the first focusable control,
+               and that should be Change, the thing people come here to do. *@
+            <Markup Content="@Shorten(Config.Config.DownloadFolder)" />
+            @if (!SettingsFocusable)
+            {
+                <Markup Content="[ Change ]" />
+                <Markup Content="[ Open ]" />
+            }
+            else
+            {
+                <TextButton Content="[ Change ]"
+                            OnClick="ChangeFolder"
+                            BackgroundColor="Theme.Surface"
+                            FocusedColor="Theme.Focus" />
+                <TextButton Content="[ Open ]"
+                            OnClick="OpenDownloadFolder"
+                            BackgroundColor="Theme.Surface"
+                            FocusedColor="Theme.Focus" />
+            }
+        </Columns>
+
+        @* The downloader's own version, surfaced deliberately. When a site starts refusing
+           downloads this is the first thing that matters, and before it was on screen there was
+           no way to tell a genuinely unavailable video from a yt-dlp that had simply gone stale. *@
+        @if (_depsChecked && DepChecker.IsYtDlpInstalled)
+        {
+            <Columns>
+                <Markup Content="@SettingLabel("yt-dlp", sideBySide)" Foreground="Theme.Muted" />
+                <Markup Content="@YtDlpStatusText" Foreground="@YtDlpStatusColor" />
+                @if (!SettingsFocusable)
+                {
+                    <Markup Content="@(_ytDlpUpdating ? "[ Updating... ]" : "[ Update ]")" />
+                }
+                else
+                {
+                    <TextButton Content="@(_ytDlpUpdating ? "[ Updating... ]" : "[ Update ]")"
+                                OnClick="UpdateYtDlpAsync"
+                                BackgroundColor="Theme.Surface"
+                                FocusedColor="Theme.Focus" />
+                }
+            </Columns>
+        }
+
+        @* Directly under the row it reports on -- "Checking...", "already up to date", a failure --
+           rather than at the bottom of the form, where it read as belonging to something else. *@
+        @if (!string.IsNullOrEmpty(_ytDlpMessage))
+        {
+            <Markup Content="@(sideBySide ? _ytDlpMessage : Field("") + _ytDlpMessage)" Foreground="@_ytDlpMessageColor" />
+        }
+    </Rows>;
+
+    private static string SettingLabel(string label, bool sideBySide) =>
+        sideBySide ? label.PadRight(7) : Field(label);
+
+    /// <summary>
+    /// Whether the keyboard-loop hook is doing its job, so Shift+Tab and the shortcuts work.
+    /// Assumed during a short grace period after startup once the proxy is installed: the first
+    /// render comes before the loop's first poll, and judging by that alone flashed the fallback
+    /// layout on every launch.
+    /// </summary>
+    private bool Keyed =>
+        InputLoop.HasHooked
+        || (InputLoop.Installed && Environment.TickCount64 - _startedAt < HookGraceMs);
+
+    private const long HookGraceMs = 3000;
+
+    private readonly long _startedAt = Environment.TickCount64;
+
+    /// <summary>
+    /// Settings mode, entered with Shift+Tab: the URL box and download buttons stop taking focus
+    /// and the Folder and yt-dlp buttons start, so Tab walks only those.
+    /// </summary>
+    private bool _settingsMode;
+
+    /// <summary>
+    /// Whether the Folder and yt-dlp buttons take focus: in settings mode, or always when the hook
+    /// is missing, since then Shift+Tab cannot reach them any other way.
+    /// </summary>
+    private bool SettingsFocusable => _settingsMode || !Keyed;
+
+    private static string Option(string label, bool selected) => (selected ? "● " : "○ ") + label;
+
+    // Colour is free to mark the selection on a label: with nothing focusable there, no background
+    // is competing to show focus.
+    private static Color OptionColor(bool selected) => selected ? Theme.Accent : Theme.Muted;
+
+    /// <summary>
+    /// Handles the keys for everything Tab no longer reaches. Runs on RazorConsole's keyboard loop,
+    /// before the key is delivered anywhere, whichever control has focus; returning true consumes
+    /// it. Ctrl combinations were picked to avoid the ones terminals keep for themselves: A, C, F,
+    /// M and V in the Windows console, S, Q and Z for flow control and suspend on Unix, and I, H
+    /// and J, which arrive as Tab, Backspace and Enter.
+    /// </summary>
+    private bool HandleShortcut(ConsoleKeyInfo key)
+    {
+        var ctrl = key.Modifiers == ConsoleModifiers.Control;
+        var plain = key.Modifiers == 0;
+
+        switch (key.Key)
+        {
+            case ConsoleKey.Tab when key.Modifiers == ConsoleModifiers.Shift:
+                SwitchMode(!_settingsMode);
+                break;
+
+            // Esc backs out of settings mode. Anywhere else it is left alone, for the URL box to
+            // clear itself.
+            case ConsoleKey.Escape when plain && _settingsMode:
+                SwitchMode(false);
+                break;
+
+            case ConsoleKey.P when ctrl:
+                // Only meaningful while the playlist row is showing. Consumed either way, so the
+                // key never reaches the URL box.
+                if (HasPlaylist(_url))
+                    Update(() => _wholePlaylist = !_wholePlaylist);
+                break;
+
+            case ConsoleKey.E when ctrl:
+                OpenDownloadFolder();
+                break;
+
+            case ConsoleKey.L when ctrl:
+                Fire(ChangeFolder);
+                break;
+
+            case ConsoleKey.U when ctrl:
+                if (_depsChecked && DepChecker.IsYtDlpInstalled)
+                    Fire(UpdateYtDlpAsync);
+                break;
+
+            default:
+                return false;
+        }
+
+        // Painted on the next poll rather than after the usual throttle, so a shortcut answers as
+        // promptly as a click did.
+        _lastRender = 0;
+        return true;
+    }
+
+    /// <summary>
+    /// Starts a shortcut's work without holding up the keyboard loop -- the folder picker alone can
+    /// sit open for as long as the user likes -- and without letting a failure escape unobserved.
+    /// </summary>
+    private static async void Fire(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch
+        {
+            // Each action reports its own failures on screen.
+        }
+    }
+
     private string DownloadsTitle
     {
         get
@@ -387,9 +611,98 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         _dirty = true;
     }
 
+    /// <summary>Focus key when the mode last switched, until focus has visibly moved off it.</summary>
+    private string? _focusKeyAtSwitch;
+
+    /// <summary>When a pending re-focus stops waiting, if focus never moves at all.</summary>
+    private long _refocusDeadline;
+
+    private bool _refocusPending;
+
     /// <summary>
-    /// The only place allowed to call StateHasChanged. Runs one tick at a time, so every repaint
-    /// this component causes is serialised against every other.
+    /// Enters or leaves settings mode. The swap of focusable controls moves focus by itself, but
+    /// RazorConsole announces that move by first sending "focus out" to the control that just
+    /// stopped taking focus -- whose handler the same render has already replaced -- and that
+    /// failure abandons the "focus in" meant for the new one. Focus lands correctly and shows
+    /// nothing until Tab is pressed, so the move is re-announced once it has happened.
+    /// </summary>
+    private void SwitchMode(bool settings)
+    {
+        _focusKeyAtSwitch = Focus.CurrentFocusKey;
+        _refocusDeadline = Environment.TickCount64 + 1000;
+        _refocusPending = true;
+
+        Update(() => _settingsMode = settings);
+    }
+
+    /// <summary>
+    /// Once focus has moved off the control it was on at the switch, steps it forward and straight
+    /// back. Both steps go through RazorConsole's own focus API with live handlers, so the control
+    /// that now has focus receives the "focus in" it missed and draws its highlight. Runs on the
+    /// keyboard loop, so the two steps cannot interleave with a keystroke.
+    /// </summary>
+    private void RefocusIfSettled()
+    {
+        if (!_refocusPending)
+            return;
+
+        if (Focus.CurrentFocusKey == _focusKeyAtSwitch)
+        {
+            // Focus had nowhere to go -- a download's Cancel stays focusable in both modes -- so
+            // there is nothing to re-announce.
+            if (Environment.TickCount64 > _refocusDeadline)
+                _refocusPending = false;
+
+            return;
+        }
+
+        _refocusPending = false;
+        _ = BounceFocusAsync();
+    }
+
+    private async Task BounceFocusAsync()
+    {
+        try
+        {
+            await Focus.FocusNextAsync();
+            await Focus.FocusPreviousAsync();
+        }
+        catch
+        {
+            // Cosmetic only: focus is already where it should be.
+        }
+    }
+
+    /// <summary>
+    /// The only place background changes are painted from. Called on RazorConsole's keyboard loop
+    /// (see <see cref="InputLoopScheduler"/>), so a repaint never overlaps the renders that
+    /// keystrokes and clicks cause: overlapping them dropped updates, leaving a pasted URL or a
+    /// cancelled row invisible until Tab made the component render again.
+    /// </summary>
+    private void RenderIfDirty()
+    {
+        RefocusIfSettled();
+
+        if (!_dirty)
+            return;
+
+        var now = Environment.TickCount64;
+        if (now - _lastRender < (long)RenderInterval.TotalMilliseconds)
+            return;
+
+        _lastRender = now;
+        _dirty = false;
+
+        lock (_sync)
+        {
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Fallback for when the keyboard loop is not polling through <see cref="InputLoopScheduler"/>
+    /// -- a RazorConsole build whose internals moved, or before its loop has started. Idle
+    /// otherwise, so there is only ever one source of background repaints.
     /// </summary>
     private async Task RenderPumpAsync(CancellationToken ct)
     {
@@ -399,15 +712,15 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         {
             while (await timer.WaitForNextTickAsync(ct))
             {
-                if (!_dirty)
+                if (InputLoop.IsPolling)
                     continue;
 
-                _dirty = false;
+                // Keyed may just have flipped to the fallback layout, which nothing else would
+                // mark dirty. Only reached when the hook is not working, so the cost is moot.
+                if (!InputLoop.HasHooked)
+                    _dirty = true;
 
-                lock (_sync)
-                {
-                    StateHasChanged();
-                }
+                RenderIfDirty();
             }
         }
         catch (OperationCanceledException)
@@ -420,6 +733,8 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
     {
         _pump = new CancellationTokenSource();
         _ = RenderPumpAsync(_pump.Token);
+        InputLoop.Register(RenderIfDirty);
+        InputLoop.RegisterShortcuts(HandleShortcut);
 
         await Config.LoadAsync();
 
@@ -437,8 +752,13 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         if (_format == format)
             return;
 
-        _format = format;
-        Config.Config.Format = format;
+        // Through Update: from a shortcut there is no event handler to repaint afterwards.
+        Update(() =>
+        {
+            _format = format;
+            Config.Config.Format = format;
+        });
+
         await SaveConfigAsync();
     }
 
@@ -601,6 +921,7 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
                     _draft = "";
                     _wholePlaylist = false;
                 });
+                InputBuffer.Reset("");
                 break;
 
             case "UpArrow" or "ArrowUp":
@@ -642,6 +963,7 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             return;
 
         Update(() => _url = _history[--_historyIndex]);
+        InputBuffer.Reset(_url);
     }
 
     private void RecallNewer()
@@ -655,20 +977,26 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         {
             _historyIndex = -1;
             Update(() => _url = _draft);
+            InputBuffer.Reset(_url);
             return;
         }
 
         Update(() => _url = _history[_historyIndex]);
+        InputBuffer.Reset(_url);
     }
 
     private void Remember(string url)
     {
         // A resubmitted URL moves to the newest slot instead of appearing twice.
-        _history.Remove(url);
-        _history.Add(url);
-
-        while (_history.Count > MaxHistory)
-            _history.RemoveAt(0);
+        //
+        // Built as a new list and swapped in, never edited in place: the save below serialises
+        // the config on another thread, and a list mutated under the serialiser throws
+        // "Collection was modified", losing the save.
+        Config.Config.RecentUrls = _history
+            .Where(u => u != url)
+            .Append(url)
+            .TakeLast(MaxHistory)
+            .ToList();
 
         _historyIndex = -1;
         _draft = "";
@@ -676,7 +1004,10 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         _ = SaveConfigAsync();
     }
 
-    private void StartDownload()
+    /// <param name="format">
+    /// The button pressed, or the last format used when the download came from Enter in the box.
+    /// </param>
+    private void StartDownload(DownloadFormat format)
     {
         var url = _url.Trim();
 
@@ -689,6 +1020,14 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         if (!url.StartsWith("http://") && !url.StartsWith("https://"))
         {
             Update(() => _formMessage = "Invalid URL. Please enter a valid link.");
+            return;
+        }
+
+        // Setup may be replacing yt-dlp right now, and until it finishes the dependency flags
+        // below are not an answer yet either.
+        if (_setupInProgress)
+        {
+            Update(() => _formMessage = "Still setting up. Try again in a moment.");
             return;
         }
 
@@ -707,9 +1046,15 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             return;
         }
 
-        // Pressing Enter twice is easy now that the box keeps its text, and starting the same
-        // download a second time would have both runs fighting over one partial file.
-        if (_downloads.Any(d => d.IsActive && d.Url == url))
+        var wholePlaylist = _wholePlaylist && HasPlaylist(url);
+
+        // Pressing Enter twice is easy, and starting the same download a second time would have
+        // both runs fighting over one partial file. Compared by what the link points at rather
+        // than its text, since youtu.be/x and youtube.com/watch?v=x&t=42 are the same file. The
+        // format is part of it: an MP3 and an MP4 of one video write different files, and asking
+        // for both is exactly what two buttons invite.
+        var key = DownloadKey(url, wholePlaylist);
+        if (_downloads.Any(d => d.IsActive && d.Format == format && DownloadKey(d.Url, d.WholePlaylist) == key))
         {
             Update(() => _formMessage = "That link is already downloading.");
             return;
@@ -719,11 +1064,14 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         {
             Id = _nextId++,
             Url = url,
-            Format = _format,
+            Format = format,
 
             // Captured per download, so changing the toggle afterwards cannot retroactively
             // turn a running single-video job into a whole-playlist one.
-            WholePlaylist = _wholePlaylist && HasPlaylist(url),
+            WholePlaylist = wholePlaylist,
+
+            // Likewise the folder: changing it mid-download must not relabel where this one went.
+            Folder = Config.Config.DownloadFolder,
         };
 
         Update(() =>
@@ -744,7 +1092,14 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             _wholePlaylist = false;
         });
 
+        // Without this the box looks empty but RazorConsole's keystroke buffer still holds the
+        // submitted URL, and the next paste is appended to it. See TextInputBufferSync.
+        InputBuffer.Reset("");
+
         Remember(url);
+
+        // Remembered, so Enter in the box repeats the last button pressed.
+        _ = SetFormat(format);
 
         _ = RunAsync(item);
     }
@@ -770,12 +1125,21 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         {
             for (var attempt = 1; ; attempt++)
             {
+                // Checked before every attempt, the first included: a row cancelled while queued
+                // can win its slot before the background Cancel() has tripped the token, and
+                // would otherwise start yt-dlp only to kill it a moment later.
+                if (item.IsCancelled)
+                {
+                    Finish(item, DownloadStatus.Cancelled, "");
+                    return;
+                }
+
                 var result = await AttemptAsync(item, attempt);
 
                 var giveUp = result.Success
                     || !result.Retryable
                     || attempt >= MaxAttempts
-                    || item.Cts.IsCancellationRequested;
+                    || item.IsCancelled;
 
                 if (giveUp)
                 {
@@ -784,12 +1148,6 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
                 }
 
                 await BackOffAsync(item, attempt, result.Message);
-
-                if (item.Cts.IsCancellationRequested)
-                {
-                    Finish(item, DownloadStatus.Cancelled, "");
-                    return;
-                }
             }
         }
         catch (Exception ex)
@@ -817,7 +1175,11 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         // DownloadAsync returns.
         var outcome = new DownloadResult(false, "Download failed unexpectedly.", "");
 
-        Update(() =>
+        // Every update below is skipped once the row is cancelled. Cancel() settles the row at
+        // once, but yt-dlp keeps printing until the kill lands, and each progress line used to
+        // set the status straight back to Downloading -- reviving the spinner and a Cancel
+        // button that no longer did anything.
+        UpdateLive(item, () =>
         {
             item.Attempt = attempt;
             item.Status = DownloadStatus.Downloading;
@@ -831,10 +1193,10 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
 
         await YtDlp.DownloadAsync(
             item.Url,
-            Config.Config.DownloadFolder,
+            item.Folder,
             item.Format,
             item.WholePlaylist,
-            onProgress: p => Update(() =>
+            onProgress: p => UpdateLive(item, () =>
             {
                 item.Percent = p.Percent;
                 item.Speed = p.Speed;
@@ -846,12 +1208,12 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
                 // the whole second stream.
                 item.Status = DownloadStatus.Downloading;
             }),
-            onStatus: msg => Update(() =>
+            onStatus: msg => UpdateLive(item, () =>
             {
                 if (msg.StartsWith("Converting") || msg.StartsWith("Merging"))
                     item.Status = DownloadStatus.Converting;
             }),
-            onMetadata: meta => Update(() =>
+            onMetadata: meta => UpdateLive(item, () =>
             {
                 if (!string.IsNullOrEmpty(meta.FileName))
                     item.FileName = meta.FileName;
@@ -869,6 +1231,14 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         return outcome;
     }
 
+    /// <summary>Applies a change to a row unless the user has cancelled it.</summary>
+    private void UpdateLive(DownloadItem item, Action change) =>
+        Update(() =>
+        {
+            if (!item.IsCancelled)
+                change();
+        });
+
     /// <summary>Waits out the backoff a second at a time so the row can show a live countdown.</summary>
     private async Task BackOffAsync(DownloadItem item, int attempt, string reason)
     {
@@ -876,7 +1246,7 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         {
             var secondsLeft = remaining;
 
-            Update(() =>
+            UpdateLive(item, () =>
             {
                 item.Status = DownloadStatus.Retrying;
                 item.Message = reason;
@@ -901,13 +1271,11 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             if (!string.IsNullOrEmpty(result.FileName))
                 item.FileName = result.FileName;
 
-            item.Folder = Config.Config.DownloadFolder;
-
             // A row the user already cancelled stays cancelled. Cancel() settles it optimistically
             // and requests the token from a background thread, so the run can unwind and land here
             // before IsCancellationRequested has even flipped — without the status check that race
             // would relabel a deliberate cancellation as a download error.
-            var cancelled = item.Status == DownloadStatus.Cancelled || item.Cts.IsCancellationRequested;
+            var cancelled = item.IsCancelled;
 
             item.Status = result.Success ? DownloadStatus.Complete
                 : cancelled ? DownloadStatus.Cancelled
@@ -996,7 +1364,7 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         try
         {
             Directory.CreateDirectory(newFolder);
-            Config.Config.DownloadFolder = newFolder;
+            Update(() => Config.Config.DownloadFolder = newFolder);
             await Config.SaveAsync();
             SetFolderMessage("✓ Folder saved!", Theme.Success);
         }
@@ -1047,6 +1415,8 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
 
     public void Dispose()
     {
+        InputLoop.Unregister(RenderIfDirty);
+        InputLoop.UnregisterShortcuts(HandleShortcut);
         _pump?.Cancel();
         _pump?.Dispose();
 
@@ -1126,30 +1496,39 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
         }
     }
 
-    private static Spectre.Console.Spinner SpinnerFor(DownloadItem item) =>
-        item.Status is DownloadStatus.Queued or DownloadStatus.Retrying
-            || (item.Status == DownloadStatus.Downloading && item.Percent <= 0)
-            ? Spectre.Console.Spinner.Known.Dots2
-            : Spectre.Console.Spinner.Known.Binary;
+    /// <summary>What an active row shows after its title, and in which colours.</summary>
+    /// <param name="Progress">The bar, or a word standing in for it while there is none.</param>
+    /// <param name="Value">The percentage, or the stage name while converting.</param>
+    /// <param name="Detail">Secondary text in grey: speed and ETA, or why a retry is waiting.</param>
+    private readonly record struct ActiveCells(
+        string SpinnerStyle,
+        string Progress,
+        Color ProgressColor,
+        string Value,
+        Color ValueColor,
+        Decoration ValueDecoration,
+        string Detail);
 
-    // Clipped to the measured width so no row can ever push the panel border off screen. The
-    // downloading row is already sized to fit, so the clip only ever bites on the free-text ones.
-    private static string ActiveLine(DownloadItem item, RowLayout layout) => Truncate(item.Status switch
+    private static ActiveCells CellsFor(DownloadItem item, RowLayout layout) => item.Status switch
     {
-        DownloadStatus.Queued =>
-            $"{Fit(LabelOf(item), layout.Label)}  Queued",
+        DownloadStatus.Queued => new(
+            Theme.Muted.ToMarkup(), Fit("Queued", layout.Bar), Theme.Muted,
+            "", Theme.Muted, Decoration.None, ""),
 
-        // The countdown comes before the reason: it is the part worth keeping when the reason
-        // is long enough to be clipped.
-        DownloadStatus.Retrying =>
-            $"{Fit(LabelOf(item), layout.Label)}  Retry {item.Attempt + 1}/{MaxAttempts} in {item.RetryIn}s — {item.Message}",
+        // The countdown takes the bar's place, in the warning colour, and the reason follows in
+        // grey where speed and ETA would be: it is the part worth losing when space runs short.
+        DownloadStatus.Retrying => new(
+            Theme.Warn.ToMarkup(), Fit($"Retry {item.Attempt + 1}/{MaxAttempts} in {item.RetryIn}s", layout.Bar), Theme.Warn,
+            "", Theme.Warn, Decoration.None, Truncate(item.Message, RateWidth + 7)),
 
-        DownloadStatus.Converting =>
-            $"{Fit(LabelOf(item), layout.Label)}  {Bar(100, layout)}  {(item.Format == DownloadFormat.Mp3 ? "Converting" : "Merging")}",
+        DownloadStatus.Converting => new(
+            Theme.Notice.ToMarkup(), Bar(100, layout), Theme.Notice,
+            item.Format == DownloadFormat.Mp3 ? "Converting" : "Merging", Theme.Notice, Decoration.None, ""),
 
-        _ =>
-            $"{Fit(LabelOf(item), layout.Label)}  {Bar(item.Percent, layout)}  {item.Percent,5:F1}%{Rate(item, layout)}",
-    }, layout.Active);
+        _ => new(
+            Theme.Accent.ToMarkup(), Bar(item.Percent, layout), Theme.Accent,
+            $"{item.Percent,5:F1}%", Color.Default, Decoration.Bold, Rate(item, layout)),
+    };
 
     private static string FinishedLine(DownloadItem item, RowLayout layout) => item.Status switch
     {
@@ -1189,12 +1568,12 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
             return "";
 
         if (string.IsNullOrEmpty(item.Eta))
-            return $"  {speed}";
+            return speed;
 
         if (string.IsNullOrEmpty(speed))
-            return $"  ETA {item.Eta}";
+            return $"ETA {item.Eta}";
 
-        return $"  {speed} · {item.Eta}";
+        return Truncate($"{speed} · {item.Eta}", RateWidth);
     }
 
     /// <summary>
@@ -1279,6 +1658,71 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
     private static bool HasPlaylist(string url) =>
         url.Contains("list=", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// "This video only" for a link that names a video inside a playlist; "First video only" for
+    /// a link to the playlist itself, where there is no particular video to mean.
+    /// </summary>
+    private static string SingleItemLabel(string url) =>
+        YouTubeIds(url) is { Video: null } ? "First video only" : "This video only";
+
+    /// <summary>
+    /// What a download is of, for spotting a duplicate: the YouTube video or playlist ID where
+    /// there is one, otherwise the link without its fragment.
+    /// </summary>
+    private static string DownloadKey(string url, bool wholePlaylist)
+    {
+        if (YouTubeIds(url) is { } ids)
+        {
+            if (wholePlaylist && ids.List is not null)
+                return "youtube-list:" + ids.List;
+
+            if (ids.Video is not null)
+                return "youtube:" + ids.Video;
+
+            if (ids.List is not null)
+                return "youtube-list:" + ids.List;
+        }
+
+        var hash = url.IndexOf('#');
+        return hash >= 0 ? url[..hash] : url;
+    }
+
+    /// <summary>
+    /// The video and playlist IDs a YouTube link carries, either of which may be null. Null
+    /// altogether for a link that is not YouTube's.
+    /// </summary>
+    private static (string? Video, string? List)? YouTubeIds(string url)
+    {
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
+            return null;
+
+        var host = uri.Host.ToLowerInvariant();
+        var isShortLink = host is "youtu.be" or "www.youtu.be";
+        var isYouTube = isShortLink
+            || host is "youtube.com" or "youtube-nocookie.com"
+            || host.EndsWith(".youtube.com", StringComparison.Ordinal)
+            || host.EndsWith(".youtube-nocookie.com", StringComparison.Ordinal);
+
+        if (!isYouTube)
+            return null;
+
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        var video = query["v"];
+        if (string.IsNullOrEmpty(video))
+        {
+            if (isShortLink && segments.Length > 0)
+                video = segments[0];
+            else if (segments.Length > 1 && (segments[0] is "shorts" or "live" or "embed"))
+                video = segments[1];
+        }
+
+        var list = query["list"];
+
+        return (string.IsNullOrEmpty(video) ? null : video, string.IsNullOrEmpty(list) ? null : list);
+    }
+
     /// <summary>Row label, prefixed with the playlist position once one is known.</summary>
     private static string LabelOf(DownloadItem item) =>
         item.IsPlaylist ? $"{item.PlaylistIndex}/{item.PlaylistCount} {item.Label}" : item.Label;
@@ -1288,8 +1732,14 @@ else if (_depsChecked && (!DepChecker.IsYtDlpInstalled || !DepChecker.IsFfmpegIn
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        return !string.IsNullOrEmpty(home) && path.StartsWith(home, StringComparison.OrdinalIgnoreCase)
-            ? string.Concat("~", path.AsSpan(home.Length))
-            : path;
+        // The match has to end at a separator, or a home of C:\Users\Bob would also claim
+        // C:\Users\Bobby and show it as "~by".
+        var underHome = !string.IsNullOrEmpty(home)
+            && path.StartsWith(home, StringComparison.OrdinalIgnoreCase)
+            && (path.Length == home.Length
+                || path[home.Length] == Path.DirectorySeparatorChar
+                || path[home.Length] == Path.AltDirectorySeparatorChar);
+
+        return underHome ? string.Concat("~", path.AsSpan(home.Length)) : path;
     }
 }

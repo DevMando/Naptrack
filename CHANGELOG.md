@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.0.5 (2026-09-25)
+
+### Fixes
+- A link could pass its own options to yt-dlp. The URL was spliced into a single command line, so a pasted link containing a quote could close it and add flags such as `--exec`. Every argument is now passed separately, and `--` ends option parsing before the URL.
+- Pasting a link after a download started, after Esc, or after recalling one with **↑** appended it to the previous URL. RazorConsole keeps its own copy of what has been typed and only re-reads the box when focus moves, so the box looked empty while that copy still held the old link. The copy is now reset whenever Naptrack changes the box itself.
+- While a download was running, a pasted link or a cancelled row often did not appear until Tab was pressed. The downloads list repainted from its own thread at the same moment keystrokes were rendering, and the renderer dropped one side's changes. Repaints now take turns with keyboard input.
+- Cancelling a download could bring its row back to life: yt-dlp kept printing progress until it was actually killed, and each line set the row back to downloading. A cancelled row now stays cancelled.
+- "This video only" on a link to a playlist itself (`/playlist?list=…`) downloaded the entire playlist, because yt-dlp's `--no-playlist` only applies to links that also name a video. Those links now download one video, and the option reads "First video only".
+- Settings could be lost. Several parts of the app saved `config.json` at once, and on Windows the second writer was refused, silently dropping its save; a crash mid-write left a truncated file that loaded as defaults and reset the download folder. Saves are now serialised and written atomically.
+- Changing the download folder while a download ran made the finished row name the new folder, not the one the file went to.
+- **[ Update ]** reported "already up to date" when GitHub could not be reached. It now says the update failed, and it no longer re-downloads a build that is already current.
+- Error messages are read from yt-dlp's `ERROR:` lines first. Warnings about hidden playlist entries were being matched as the failure, so a rate-limited download was reported as an unavailable video and never retried.
+- A download started during setup could launch yt-dlp while it was being replaced.
+- A `%` in a video title was read as a progress update, which also hid the Converting status.
+- Two links to the same video (`youtu.be/…` and `youtube.com/watch?v=…&t=42`) could both download at once into the same partial file. Links are now compared by video, while an MP3 and an MP4 of the same video may run side by side.
+- Sites that publish no MP4 streams failed MP4 downloads with "Requested format is not available". Other formats are now used as a fallback and merged into MP4.
+- Accented and non-Latin titles and folder names are read as UTF-8 on Windows instead of arriving garbled.
+- Folder paths just outside the home folder (`C:\Users\Bobby` for `C:\Users\Bob`) were shortened to nonsense such as `~by`.
+- An interrupted ffmpeg download no longer leaves a partial archive of a hundred-odd megabytes behind, and extracting it on Linux can no longer hang setup.
+
+### Interface
+- **[ Download MP4 ]** and **[ Download MP3 ]** sit directly under the URL box, replacing the format toggle and the single **[ Download ]** button. Enter in the box repeats whichever format was used last.
+- **Tab** moves between the URL box and the two download buttons, plus a running download's **[ Cancel ]**. **Shift+Tab** switches to the settings — **[ Change ]**, **[ Open ]** and **[ Update ]** — and **Shift+Tab** or **Esc** switches back. Ctrl+E opens the download folder, Ctrl+L changes it, Ctrl+U updates yt-dlp, and Ctrl+P toggles the playlist choice.
+- The folder and yt-dlp rows sit to the right of the download buttons when the window is at least 100 columns wide, and below them otherwise. The folder path is plain text, with **[ Open ]** beside **[ Change ]**.
+- yt-dlp's "Checking…", "already up to date" and failure messages appear directly under its row.
+- Download rows are coloured by part: the spinner and bar show the state (blue downloading, purple converting, yellow retrying, grey queued), the title stays white, the percentage is bold, and speed and ETA are grey. Every row uses the same one-character spinner, so titles line up.
+- The version sits beside the banner instead of on a row of its own.
+
 ## 1.0.4 (2026-08-18)
 
 ### Fixes

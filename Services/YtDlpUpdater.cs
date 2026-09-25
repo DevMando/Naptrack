@@ -36,7 +36,10 @@ public class YtDlpUpdater
         /// <summary>A newer build was fetched. The caller must re-run the dependency check.</summary>
         Updated,
 
-        /// <summary>A newer build was published but could not be fetched. The old one still works.</summary>
+        /// <summary>
+        /// A newer build could not be fetched, or a requested check could not reach GitHub at all.
+        /// The old one still works.
+        /// </summary>
         Failed,
 
         /// <summary>yt-dlp came from PATH, so it is not Naptrack's to replace.</summary>
@@ -47,9 +50,10 @@ public class YtDlpUpdater
     /// Brings the managed yt-dlp up to date if it is due a check.
     /// </summary>
     /// <param name="force">
-    /// Skips the once-a-day throttle and adopts the published build whatever the recorded version
-    /// says. This is what the manual button does: someone who has just been told they are blocked
-    /// wants the newest binary now, not a reminder that Naptrack looked yesterday.
+    /// Skips the once-a-day throttle, and compares the published build only against the version
+    /// the binary itself reports, never the one recorded in the config. This is what the manual
+    /// button does: someone who has just been told they are blocked wants the newest binary now,
+    /// not a reminder that Naptrack looked yesterday.
     /// </param>
     public async Task<Outcome> EnsureCurrentAsync(
         bool force = false,
@@ -84,10 +88,14 @@ public class YtDlpUpdater
         //
         // Adoption carries on regardless: the download URL resolves the newest build server-side
         // and needs nothing from the API, so a stale system copy still gets replaced.
+        //
+        // Unless the user asked. Then "could not check" has to be said as such: answering
+        // "already up to date" to someone troubleshooting blocked downloads while offline sends
+        // them looking everywhere except their connection.
         if (latest is null && !adopting)
-            return Outcome.UpToDate;
+            return force ? Outcome.Failed : Outcome.UpToDate;
 
-        if (!adopting && !force && MatchesInstalled(latest!))
+        if (!adopting && MatchesInstalled(latest!, trustConfig: !force))
         {
             await RecordCheckAsync(latest);
             return Outcome.UpToDate;
@@ -123,11 +131,15 @@ public class YtDlpUpdater
     /// binary reports over the one in the config: a hand-replaced binary, or a config that was
     /// written before the download failed, would otherwise pin the comparison to a stale value.
     /// </summary>
-    private bool MatchesInstalled(string latest)
+    /// <param name="trustConfig">
+    /// Whether the recorded version may stand in when the binary did not report one. Off for a
+    /// forced check, where an unreadable version should mean "fetch it" rather than a guess.
+    /// </param>
+    private bool MatchesInstalled(string latest, bool trustConfig)
     {
         var installed = !string.IsNullOrWhiteSpace(_depChecker.YtDlpVersion)
             ? _depChecker.YtDlpVersion
-            : _config.Config.YtDlpVersion;
+            : trustConfig ? _config.Config.YtDlpVersion : null;
 
         return string.Equals(installed?.Trim(), latest.Trim(), StringComparison.OrdinalIgnoreCase);
     }

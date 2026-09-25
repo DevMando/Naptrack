@@ -23,6 +23,13 @@ IHostBuilder hostBuilder = Host.CreateDefaultBuilder(args)
             services.AddSingleton<YtDlpUpdater>();
             services.AddSingleton<YtDlpService>();
             services.AddSingleton<FolderPickerService>();
+            services.AddSingleton<TextInputBufferSync>();
+
+            // Created here rather than left to the container: it has to register its console
+            // input proxy into this same collection before RazorConsole resolves the keyboard loop.
+            var inputLoop = new InputLoopScheduler();
+            services.AddSingleton(inputLoop);
+            inputLoop.Install(services);
         });
     });
 
